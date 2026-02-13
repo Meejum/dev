@@ -394,7 +394,7 @@ python -m serial.tools.miniterm /dev/ttyUSB0 115200
 
 ```
 [INIT] ESP32-S3-LCD-7B Vehicle Dashboard v1.0
-[INIT] CAN Bus: 250 kbaud
+[INIT] CAN Bus: 500 kbaud
 [INIT] RS485: 9600 baud
 [INIT] Display: 1024x600 @30Hz
 [INIT] Memory: RAM=41KB / Flash=740KB
@@ -515,7 +515,7 @@ esptool.py --port /dev/ttyUSB0 write_flash 0x10000 firmware.bin
 - Verify GPIO19/20 connections
 - Check CAN transceiver power
 - Confirm EXIO5 = HIGH for CAN mode
-- Check CAN baud rate (250 kbaud)
+- Check CAN baud rate (500 kbaud)
 - Monitor: look for "[CAN]" messages
 
 #### No RS485 data (right panel empty)
@@ -587,9 +587,9 @@ In **src/main.cpp**:
 In **src/main.cpp**:
 
 ```cpp
-can.begin(250000);  // 250 kbaud (default)
+can.begin(500000);  // 500 kbaud (default)
 // OR
-can.begin(500000);  // 500 kbaud (faster)
+can.begin(250000);  // 250 kbaud (alternative)
 ```
 
 ### Configure WG-BC900M Charger

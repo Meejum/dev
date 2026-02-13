@@ -338,7 +338,7 @@ void ui_dashboard_update(VehicleData *d) {
     int spd = d->speed >= 0 ? d->speed : 0;
     snprintf(buf, sizeof(buf), "%d", spd);
     lv_label_set_text(lbl_speed_val, buf);
-    lv_arc_set_value(arc_speed, spd * 100 / 220);
+    lv_arc_set_value(arc_speed, spd * 100 / 200);  // 0-200 km/h max range
 
     int rpm = d->rpm >= 0 ? d->rpm : 0;
     snprintf(buf, sizeof(buf), "%d", rpm);
@@ -348,7 +348,7 @@ void ui_dashboard_update(VehicleData *d) {
     int ect = d->ect >= -40 ? d->ect : 0;
     snprintf(buf, sizeof(buf), "%d", ect);
     lv_label_set_text(lbl_ect_val, buf);
-    lv_arc_set_value(arc_ect, (ect + 40) * 100 / 170);
+    lv_arc_set_value(arc_ect, (ect + 40) * 100 / 160);  // 0-120°C range (OBD raw: 0-160)
 
     int throt = d->throttle >= 0 ? d->throttle : 0;
     snprintf(buf, sizeof(buf), "%d", throt);

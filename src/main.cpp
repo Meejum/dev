@@ -152,7 +152,7 @@ bool setCurrent(float amp) {
     Serial1.write(buf, 8);
     Serial1.flush();
 
-    uint8_t resp[8];
+    uint8_t resp[8] = {0};  // Initialize buffer
     int len = 0;
     unsigned long t0 = millis();
     while (len < 8 && millis() - t0 < 200) {
@@ -187,7 +187,7 @@ void updateChargingLogic() {
 
     float target = 12.0f;  // Default reduced rate
     if (vdata.speed > 30 && vdata.rpm > 1000 &&
-        vdata.ect >= -30 && vdata.ect <= 95 && safe) {
+        vdata.ect >= 60 && vdata.ect <= 100 && safe) {
         target = 30.0f;    // Full charging rate
     }
 
@@ -229,7 +229,7 @@ void initDisplay() {
     // NOTE: The 7B board uses a CH32V003 MCU as IO expander
     // accessed via I2C at address 0x24
     // The ESP32_IO_Expander library handles this
-    io_expander = new ESP_IOExpander_CH422G(I2C_SDA, I2C_SCL, IO_EXP_ADDR);
+    io_expander = new esp_expander::CH422G(I2C_SDA, I2C_SCL, IO_EXP_ADDR);
     io_expander->init();
     io_expander->begin();
 
