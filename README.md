@@ -128,12 +128,79 @@ Charger RS485 ─→ Serial Driver ─→ Charger Parser → Data Buffer
 - **Optional: CAN transceiver** (MCP2515 or similar for OBD-II)
 - **Optional: RS485 transceiver** (MAX485 or similar for charger)
 
+### Supported DC-DC Chargers
+
+#### ✅ WG-BC900M Series (Recommended)
+
+This project is **fully compatible** with the **Wengao WG-BC900M** lithium battery charger:
+
+| Specification | Details |
+|---------------|---------|
+| **Model** | WG-BC900M (Shenzhen Wengao Electronic) |
+| **Protocol** | Modbus RTU (RS485) |
+| **Baud Rate** | 9600 bps (8N1) |
+| **Input** | Dual Terminal A & B (8-60V) |
+| **Output** | 10-120V DC adjustable |
+| **Max Current** | 15A per output |
+| **Battery Types** | Li-NCM, Li-LFP, Lead-acid (AGM/GEL) |
+| **Battery Voltages** | 12V, 16V, 24V, 36V, 48V, 60V, 72V |
+| **Features** | Temperature monitoring (3 sensors), Over-voltage/under-voltage protection, Fault detection |
+
+**Why WG-BC900M?**
+- ✅ Modbus RTU standard (easy to integrate)
+- ✅ Dual charger support (simultaneous A & B ports)
+- ✅ 3 temperature sensors (T1, T2, Ta)
+- ✅ Comprehensive fault/alarm signals
+- ✅ Real-time power monitoring
+
+**Integration Details:**
+- Connection: RS485 (GPIO15 TX, GPIO16 RX)
+- Default address: 0x01
+- Read interval: 200ms (configurable)
+- Supported operations: Read voltages, currents, temps, fault status, set charging mode
+
+**Real-Time Data Available:**
+```
+Terminal A Voltage  (0x0200) - 0-63V range
+Terminal A Current  (0x0201) - 0-50A range
+Terminal B Voltage  (0x0203) - 0-63V range
+Terminal B Current  (0x0204) - 0-50A range
+Temperature T1      (0x0206) - Charger internal
+Temperature T2      (0x0207) - Battery sensor
+Temperature Ta      (0x020E) - Ambient/environment
+Power Mode          (0x0208) - Standard/Battery/Custom
+Charging Mode       (0x0209) - Forward/Reverse/Auto/Manual/Peripheral
+Charging Status     (0x020F) - Pre-charge/CC/CV/Float/Complete
+Fault Signal        (0x020A) - Over-voltage, under-voltage, over-temp, short-circuit
+```
+
+**Modbus Protocol Summary:**
+- Read function: 0x03 (read holding registers)
+- Write function: 0x06 (write single register) / 0x10 (write multiple)
+- CRC16 validation included
+- Full protocol documentation included in project
+
+#### Other Supported Chargers
+
+This project can be adapted for other Modbus RTU chargers:
+- **Victron SmartSolar MPPT** (Solar charge controllers)
+- **Epever/Epsoltech** (MPPT/PWM controllers)
+- **Meanwell** (DIN-rail DC-DC converters with RS485)
+- **Custom Modbus devices** (follow WG-BC900M protocol structure)
+
+**To use a different charger:**
+1. Obtain the Modbus RTU protocol documentation
+2. Map register addresses to your charger
+3. Update RS485 read function in `src/main.cpp`
+4. Adjust baud rate if different from 9600
+5. Test with serial monitor enabled
+
 ### Recommended Setup
 ```
 ┌─────────────────────────────────────────────────┐
 │ Vehicle                                         │
 │ ├─ OBD-II Connector ──→ CAN Transceiver ──┐   │
-│ └─ Charger Controller ─→ RS485 Transceiver├──┐│
+│ └─ WG-BC900M Charger ─→ RS485 Transceiver ├──┐│
 └──────────────────────────────────────────┘  ││
                                              ││
                         ┌────────────────────┘│
@@ -523,6 +590,71 @@ In **src/main.cpp**:
 can.begin(250000);  // 250 kbaud (default)
 // OR
 can.begin(500000);  // 500 kbaud (faster)
+```
+
+### Configure WG-BC900M Charger
+
+The project is pre-configured for WG-BC900M chargers. To customize:
+
+**1. Modbus Address:**
+```cpp
+#define MODBUS_SLAVE_ID 0x01  // Default charger address
+#define MODBUS_BAUD 9600      // Default baud rate
+```
+
+**2. Read Registers (Real-Time Data):**
+```cpp
+// Voltage monitoring (divide by 100 for actual value)
+float terminalA_voltage = readModbus(0x0200) / 100.0f;  // V
+float terminalA_current = readModbus(0x0201) / 100.0f;  // A
+
+// Temperature sensors
+int temp_T1 = readModbus(0x0206);  // °C (charger internal)
+int temp_T2 = readModbus(0x0207);  // °C (battery)
+int temp_Ta = readModbus(0x020E);  // °C (ambient)
+
+// Charging status
+int charging_status = readModbus(0x020F);
+// 0: DC-DC Mode, 1: Pre-charge, 2: CC, 3: CV, 4: Float, 5: Complete
+
+// Fault detection
+int fault_signal = readModbus(0x020A);
+// Check bits: Bit0=short-circuit, Bit1=over-voltage, Bit2=under-voltage, etc.
+```
+
+**3. Write Registers (Control):**
+```cpp
+// Set charging mode
+writeModbus(0x0403, 0x0002);  // Auto mode (forward/reverse)
+writeModbus(0x0403, 0x0001);  // Reverse mode
+writeModbus(0x0403, 0x0000);  // Forward mode
+
+// Set battery type
+writeModbus(0x0404, 0x0024);  // Terminal A: 48V Li-LFP
+writeModbus(0x0405, 0x0024);  // Terminal B: 48V Li-LFP
+
+// Set voltage thresholds
+writeModbus(0x0820, 4000);   // Terminal A: 40V min (4000 * 0.01)
+writeModbus(0x0822, 5500);   // Terminal A: 55V max (5500 * 0.01)
+```
+
+**4. Modbus CRC Calculation:**
+The project includes CRC16 validation (included in src/main.cpp):
+```cpp
+// CRC16 is automatically calculated for all Modbus frames
+// Uses Modbus RTU standard polynomial (0xA001)
+```
+
+**5. Troubleshooting Charger Communication:**
+```bash
+# Monitor serial output
+pio device monitor --port /dev/ttyUSB0 --baud 115200
+
+# Look for messages like:
+# [RS485] Charger connected
+# [RS485] TX: 01 03 0200 0001 CRC
+# [RS485] RX: 01 03 02 0B86 CRC
+# [RS485] Voltage: 29.50V Current: 10.50A
 ```
 
 ### Customize Gauge Ranges
