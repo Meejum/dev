@@ -112,17 +112,17 @@ ApplicationWindow {
                     spacing: 4
                     Rectangle {
                         width: 8; height: 8; radius: 4
-                        color: dash.canOk ? cGreen : cMuted
+                        color: dash && dash.canOk ? cGreen : cMuted
                     }
                     Rectangle {
                         width: 8; height: 8; radius: 4
-                        color: dash.rs485Ok ? cGreen : cMuted
+                        color: dash && dash.rs485Ok ? cGreen : cMuted
                     }
                 }
 
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: dash.uptime
+                    text: dash ? dash.uptime : "00:00:00"
                     font.pixelSize: 8
                     color: cMuted
                 }

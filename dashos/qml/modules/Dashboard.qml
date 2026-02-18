@@ -44,7 +44,7 @@ Item {
                     Gauge {
                         label: "SPEED"
                         unit: "km/h"
-                        value: dash.speed
+                        value: dash ? dash.speed : 0
                         maxValue: 200
                         arcColor: "#06b6d4"
                         Layout.fillWidth: true
@@ -53,7 +53,7 @@ Item {
                     Gauge {
                         label: "RPM"
                         unit: "rpm"
-                        value: dash.rpm
+                        value: dash ? dash.rpm : 0
                         maxValue: 8000
                         arcColor: "#f59e0b"
                         Layout.fillWidth: true
@@ -62,7 +62,7 @@ Item {
                     Gauge {
                         label: "COOLANT"
                         unit: "°C"
-                        value: dash.coolant
+                        value: dash ? dash.coolant : 0
                         maxValue: 130
                         arcColor: "#3b82f6"
                         Layout.fillWidth: true
@@ -71,7 +71,7 @@ Item {
                     Gauge {
                         label: "THROTTLE"
                         unit: "%"
-                        value: dash.throttle
+                        value: dash ? dash.throttle : 0
                         maxValue: 100
                         arcColor: "#22c55e"
                         Layout.fillWidth: true
@@ -97,7 +97,7 @@ Item {
                             }
                             Item { Layout.fillWidth: true }
                             Text {
-                                text: dash.load + "%"
+                                text: (dash ? dash.load : 0) + "%"
                                 color: "#06b6d4"
                                 font.pixelSize: 20
                                 font.bold: true
@@ -130,12 +130,12 @@ Item {
                     font.bold: true
                 }
 
-                DataRow { label: "BATTERY";   value: dash.battV.toFixed(2) + " V";     valueColor: "#22c55e" }
-                DataRow { label: "CURRENT";   value: dash.battI.toFixed(1) + " A";     valueColor: "#f59e0b" }
-                DataRow { label: "SET POINT"; value: dash.chargeRate.toFixed(1) + " A"; valueColor: "#3b82f6" }
-                DataRow { label: "TEMP T1";   value: dash.tempT1 + " °C";              valueColor: "#06b6d4" }
-                DataRow { label: "TEMP T2";   value: dash.tempT2 + " °C";              valueColor: "#06b6d4" }
-                DataRow { label: "AMBIENT";   value: dash.tempAmb + " °C";             valueColor: "#94a3b8" }
+                DataRow { label: "BATTERY";   value: dash ? dash.battV.toFixed(2) + " V" : "---";     valueColor: "#22c55e" }
+                DataRow { label: "CURRENT";   value: dash ? dash.battI.toFixed(1) + " A" : "---";     valueColor: "#f59e0b" }
+                DataRow { label: "SET POINT"; value: dash ? dash.chargeRate.toFixed(1) + " A" : "---"; valueColor: "#3b82f6" }
+                DataRow { label: "TEMP T1";   value: dash ? dash.tempT1 + " °C" : "---";              valueColor: "#06b6d4" }
+                DataRow { label: "TEMP T2";   value: dash ? dash.tempT2 + " °C" : "---";              valueColor: "#06b6d4" }
+                DataRow { label: "AMBIENT";   value: dash ? dash.tempAmb + " °C" : "---";             valueColor: "#94a3b8" }
 
                 Item { Layout.fillHeight: true }
 
@@ -151,7 +151,7 @@ Item {
                     Text {
                         anchors.fill: parent
                         anchors.margins: 10
-                        text: "✓ " + dash.faultText
+                        text: "✓ " + (dash ? dash.faultText : "---")
                         color: "#22c55e"
                         font.pixelSize: 13
                         wrapMode: Text.WordWrap

@@ -266,6 +266,8 @@ def main():
     parser = argparse.ArgumentParser(description='DashOS Vehicle Operating System')
     parser.add_argument('--demo', action='store_true', help='Run in demo mode with simulated data')
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen kiosk mode')
+    parser.add_argument('--screenshot', type=str, metavar='FILE',
+                        help='Capture screenshot to FILE after rendering, then exit')
     args = parser.parse_args()
 
     # Handle Ctrl+C gracefully
@@ -289,10 +291,50 @@ def main():
         print("[ERROR] Failed to load QML UI")
         sys.exit(1)
 
+    root = engine.rootObjects()[0]
+
+    # Force window size (offscreen platform may ignore QML width/height)
+    from PySide6.QtCore import QSize
+    root.setWidth(1024)
+    root.setHeight(600)
+    root.setMinimumSize(QSize(1024, 600))
+
     # Fullscreen mode for kiosk
     if args.fullscreen:
-        root = engine.rootObjects()[0]
         root.showFullScreen()
+
+    # Screenshot mode: capture after UI renders, then exit
+    if args.screenshot:
+        def take_screenshot():
+            # QQuickWindow.grabWindow() returns QImage in Qt6
+            img = root.grabWindow()
+            out_path = os.path.abspath(args.screenshot)
+            img.save(out_path)
+            print(f"Screenshot saved: {out_path} ({img.width()}x{img.height()})")
+            app.quit()
+
+        # For QQuickWindow, we need to ensure rendering happens first
+        def request_grab():
+            # Use the QML grabToImage on contentItem as fallback
+            try:
+                img = root.grabWindow()
+                out_path = os.path.abspath(args.screenshot)
+                img.save(out_path)
+                print(f"Screenshot saved: {out_path} ({img.width()}x{img.height()})")
+            except (AttributeError, RuntimeError):
+                # Fallback: grab via screen
+                screen = app.primaryScreen()
+                if screen:
+                    pixmap = screen.grabWindow(0)
+                    out_path = os.path.abspath(args.screenshot)
+                    pixmap.save(out_path)
+                    print(f"Screenshot saved: {out_path} ({pixmap.width()}x{pixmap.height()})")
+                else:
+                    print("[ERROR] No screen available for screenshot")
+            app.quit()
+
+        # Allow 3 seconds for QML to fully render and demo data to populate
+        QTimer.singleShot(3000, request_grab)
 
     sys.exit(app.exec())
 

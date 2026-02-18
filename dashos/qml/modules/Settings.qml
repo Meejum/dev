@@ -175,7 +175,7 @@ Item {
                         Text { text: "SYSTEM"; color: "#06b6d4"; font.pixelSize: 13; font.bold: true }
                         Text { text: "DashOS v1.0.0"; color: "#94a3b8"; font.pixelSize: 12 }
                         Text { text: "ESP32 Bridge: Connected (115200 baud)"; color: "#22c55e"; font.pixelSize: 12 }
-                        Text { text: "Uptime: " + dash.uptime; color: "#94a3b8"; font.pixelSize: 12 }
+                        Text { text: "Uptime: " + (dash ? dash.uptime : "00:00:00"); color: "#94a3b8"; font.pixelSize: 12 }
 
                         RowLayout {
                             spacing: 12
