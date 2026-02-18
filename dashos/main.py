@@ -20,6 +20,13 @@ import json
 import math
 import time
 
+# Must set offscreen screen size BEFORE Qt is imported
+# Device: Waveshare 7" Touch LCD — 1024x600 native resolution
+DASHOS_WIDTH = 1024
+DASHOS_HEIGHT = 600
+if os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+    os.environ['QT_QPA_OFFSCREEN_SCREEN_SIZE'] = f'{DASHOS_WIDTH}x{DASHOS_HEIGHT}'
+
 from PySide6.QtCore import QUrl, QTimer, Property, Signal, Slot, QObject
 from PySide6.QtGui import QGuiApplication, QFont
 from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
@@ -894,26 +901,31 @@ def main():
 
     root = engine.rootObjects()[0]
 
-    # Force window size (offscreen platform may ignore QML width/height)
+    # Force window size to match device resolution
     from PySide6.QtCore import QSize
-    root.setWidth(1024)
-    root.setHeight(600)
-    root.setMinimumSize(QSize(1024, 600))
+    root.setWidth(DASHOS_WIDTH)
+    root.setHeight(DASHOS_HEIGHT)
+    root.setMinimumSize(QSize(DASHOS_WIDTH, DASHOS_HEIGHT))
 
     # Fullscreen mode for kiosk
     if args.fullscreen:
         root.showFullScreen()
 
     def grab_window_image():
-        """Grab window screenshot with fallback for different Qt backends"""
-        try:
-            return root.grabWindow()
-        except AttributeError:
-            screen = app.primaryScreen()
-            if screen:
-                pixmap = screen.grabWindow(0)
-                return pixmap.toImage()
-            return None
+        """Grab window screenshot at device resolution (1024x600)"""
+        screen = app.primaryScreen()
+        if screen:
+            # Grab the entire screen content
+            pixmap = screen.grabWindow(0)
+            img = pixmap.toImage()
+            if img and not img.isNull():
+                # Scale to exact device resolution if offscreen platform differs
+                if img.width() != DASHOS_WIDTH or img.height() != DASHOS_HEIGHT:
+                    from PySide6.QtCore import Qt
+                    img = img.scaled(DASHOS_WIDTH, DASHOS_HEIGHT,
+                                     Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                return img
+        return None
 
     # Screenshot mode: capture after UI renders, then exit
     if args.screenshot:
