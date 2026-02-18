@@ -25,7 +25,7 @@ struct VehicleData;
  * Initialize SD card on SPI bus
  * CS pin is on IO expander EXIO4, must be managed externally
  */
-static bool sd_init(ESP_IOExpander *io_exp) {
+static bool sd_init(esp_expander::Base *io_exp) {
     // SD CS is on IO expander — we need to use a GPIO for SPI CS
     // The IO expander controls the actual CS line
     // Set EXIO4 high (deselect) first

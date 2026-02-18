@@ -55,7 +55,7 @@ static bool dtc_clear_requested = false;
 
 // ─── IO Expander (needed in both modes for CAN mux) ──
 #include <ESP_IOExpander_Library.h>
-static ESP_IOExpander *io_expander = NULL;
+static esp_expander::Base *io_expander = NULL;
 
 /* ══════════════════════════════════════════════════════════════
  * GLOBAL VEHICLE + CHARGER DATA

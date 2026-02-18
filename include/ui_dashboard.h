@@ -37,6 +37,15 @@ struct VehicleData {
     // Status
     bool canOk   = false;
     bool rs485Ok = false;
+    // Extended OBD fields
+    float fuelRate = -1;       // L/h (PID 0x5E)
+    float fuelLevel = -1;      // % (PID 0x2F)
+    float maf = -1;            // g/s (PID 0x10)
+    int intakeAirTemp = -40;   // °C (PID 0x0F)
+    int oilTemp = -40;         // °C (PID 0x5C)
+    float timingAdv = 0;       // degrees (PID 0x0E)
+    float o2Voltage = -1;      // V (PID 0x14)
+    int fuelPressure = -1;     // kPa (PID 0x0A)
 };
 
 /* ══════════════════════════════════════════════════════════════
