@@ -89,6 +89,9 @@ class DashOSApp(QObject):
     trackDurationChanged = Signal()
     isPlayingChanged = Signal()
 
+    # ── Charger enable signal ──
+    chargerEnabledChanged = Signal()
+
     # ── Mode signals ──
     hudModeChanged = Signal()
     drivingModeChanged = Signal()
@@ -116,6 +119,7 @@ class DashOSApp(QObject):
         self._rs485_ok = False
         self._fault_text = "Initializing..."
         self._uptime = "00:00:00"
+        self._charger_enabled = True
 
         # GPS data
         self._gps_lat = 0.0
@@ -492,6 +496,11 @@ class DashOSApp(QObject):
         if 'amb' in chg:
             self._temp_amb = chg['amb']
             self.tempAmbChanged.emit()
+        if 'en' in chg:
+            en = bool(chg['en'])
+            if en != self._charger_enabled:
+                self._charger_enabled = en
+                self.chargerEnabledChanged.emit()
 
         self._can_ok = data.get('can', False)
         self.canOkChanged.emit()
@@ -620,6 +629,9 @@ class DashOSApp(QObject):
     @Property(bool, notify=rs485OkChanged)
     def rs485Ok(self): return self._rs485_ok
 
+    @Property(bool, notify=chargerEnabledChanged)
+    def chargerEnabled(self): return self._charger_enabled
+
     @Property(str, notify=faultTextChanged)
     def faultText(self): return self._fault_text
 
@@ -739,6 +751,14 @@ class DashOSApp(QObject):
     def setChargeCurrent(self, amps):
         if self._serial_bridge:
             self._serial_bridge.send_command('set_current', val=amps)
+
+    @Slot()
+    def toggleCharger(self):
+        """Toggle DC charger on/off"""
+        self._charger_enabled = not self._charger_enabled
+        self.chargerEnabledChanged.emit()
+        if self._serial_bridge:
+            self._serial_bridge.send_command('enable_charger', val=1 if self._charger_enabled else 0)
 
     @Slot()
     def resetTrip(self):

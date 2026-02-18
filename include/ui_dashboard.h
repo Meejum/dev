@@ -37,6 +37,7 @@ struct VehicleData {
     // Status
     bool canOk   = false;
     bool rs485Ok = false;
+    bool chargerEnabled = true;
 };
 
 /* ══════════════════════════════════════════════════════════════

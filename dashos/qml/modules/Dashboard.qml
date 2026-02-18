@@ -347,11 +347,51 @@ Item {
                 anchors.margins: 10
                 spacing: 5
 
-                Text {
-                    text: "\ud83d\udd0b CHARGER"
-                    color: "#22c55e"
-                    font.pixelSize: 13
-                    font.bold: true
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "\ud83d\udd0b CHARGER"
+                        color: (dash && dash.chargerEnabled) ? "#22c55e" : "#ef4444"
+                        font.pixelSize: 13
+                        font.bold: true
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    // DC Charge ON/OFF toggle button
+                    Rectangle {
+                        width: 56; height: 24; radius: 12
+                        color: (dash && dash.chargerEnabled) ? "#166534" : "#450a0a"
+                        border.color: (dash && dash.chargerEnabled) ? "#22c55e" : "#ef4444"
+                        border.width: 1
+
+                        // Sliding knob
+                        Rectangle {
+                            id: toggleKnob
+                            width: 18; height: 18; radius: 9
+                            color: (dash && dash.chargerEnabled) ? "#22c55e" : "#ef4444"
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: (dash && dash.chargerEnabled) ? parent.width - width - 3 : 3
+                            Behavior on x { NumberAnimation { duration: 150 } }
+                        }
+
+                        // ON/OFF label
+                        Text {
+                            anchors.centerIn: parent
+                            anchors.horizontalCenterOffset: (dash && dash.chargerEnabled) ? -8 : 8
+                            text: (dash && dash.chargerEnabled) ? "ON" : "OFF"
+                            color: "#f1f5f9"
+                            font.pixelSize: 8
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: dash.toggleCharger()
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                    }
                 }
 
                 DataRow { label: "BATTERY";   value: dash ? dash.battV.toFixed(2) + " V" : "---";     valueColor: "#22c55e" }
@@ -411,16 +451,18 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 50
-                    color: "#052e16"
-                    border.color: "#166534"
+                    color: (dash && !dash.chargerEnabled) ? "#1c1917" : "#052e16"
+                    border.color: (dash && !dash.chargerEnabled) ? "#57534e" : "#166534"
                     border.width: 1
                     radius: 10
 
                     Text {
                         anchors.fill: parent
                         anchors.margins: 8
-                        text: "\u2713 " + (dash ? dash.faultText : "---")
-                        color: "#22c55e"
+                        text: (dash && !dash.chargerEnabled)
+                              ? "\u25cf DC CHARGE OFF"
+                              : "\u2713 " + (dash ? dash.faultText : "---")
+                        color: (dash && !dash.chargerEnabled) ? "#ef4444" : "#22c55e"
                         font.pixelSize: 11
                         wrapMode: Text.WordWrap
                         verticalAlignment: Text.AlignVCenter
