@@ -225,27 +225,62 @@ Item {
                 }
             }
 
-            // Maps tile
+            // Offline Maps tile (UAE)
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 color: "#111827"
                 radius: 16
-                border.color: "#334155"
-                border.width: 1
+                border.color: (dash && dash.uaeMapReady) ? "#22c55e" : "#334155"
+                border.width: (dash && dash.uaeMapReady) ? 2 : 1
 
                 Column {
                     anchors.centerIn: parent
-                    spacing: 10
-                    Text { text: "\ud83d\uddfa"; font.pixelSize: 40; anchors.horizontalCenter: parent.horizontalCenter }
+                    spacing: 8
+                    Text { text: "\ud83d\uddfa"; font.pixelSize: 36; anchors.horizontalCenter: parent.horizontalCenter }
                     Text { text: "Offline Maps"; color: "#f1f5f9"; font.pixelSize: 16; font.bold: true; anchors.horizontalCenter: parent.horizontalCenter }
-                    Text { text: "OpenStreetMap navigation\nWorks without internet"; color: "#94a3b8"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter }
+                    Text {
+                        text: (dash && dash.uaeMapReady) ? "UAE Map Ready (~380 MB)" : "UAE Map not downloaded"
+                        color: (dash && dash.uaeMapReady) ? "#22c55e" : "#94a3b8"
+                        font.pixelSize: 11
+                        horizontalAlignment: Text.AlignHCenter
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+
+                    // Navigate button (when map is ready)
                     Rectangle {
                         width: 110; height: 32; radius: 8
+                        visible: dash ? dash.uaeMapReady : false
                         color: "#1e293b"; border.color: "#22c55e"
                         anchors.horizontalCenter: parent.horizontalCenter
                         Text { anchors.centerIn: parent; text: "NAVIGATE"; color: "#22c55e"; font.pixelSize: 11; font.bold: true }
-                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: dash.launchNavigation() }
+                    }
+
+                    // Download button (when map is not ready)
+                    Rectangle {
+                        width: 130; height: 32; radius: 8
+                        visible: dash ? (!dash.uaeMapReady && !dash.mapDownloading) : true
+                        color: "#1e293b"; border.color: "#3b82f6"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        Text { anchors.centerIn: parent; text: "DOWNLOAD UAE"; color: "#3b82f6"; font.pixelSize: 11; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: dash.downloadUaeMap() }
+                    }
+
+                    // Downloading progress
+                    Column {
+                        visible: dash ? dash.mapDownloading : false
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: 4
+                        Text { text: "Downloading..."; color: "#60a5fa"; font.pixelSize: 10; anchors.horizontalCenter: parent.horizontalCenter }
+                        Rectangle {
+                            width: 120; height: 6; radius: 3; color: "#1e293b"
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            Rectangle {
+                                width: parent.width * (dash ? dash.mapDownloadProgress : 0)
+                                height: parent.height; radius: 3; color: "#3b82f6"
+                            }
+                        }
                     }
                 }
             }

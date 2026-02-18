@@ -112,6 +112,24 @@ ApplicationWindow {
                                 font.letterSpacing: 1
                             }
                         }
+
+                        // Update notification badge on Settings icon
+                        Rectangle {
+                            visible: modelData.page === 5 && (dash ? dash.updateAvailable : false)
+                            width: 10; height: 10; radius: 5
+                            color: "#3b82f6"
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.topMargin: 4
+                            anchors.rightMargin: 4
+
+                            SequentialAnimation on opacity {
+                                running: visible
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.3; duration: 800 }
+                                NumberAnimation { to: 1.0; duration: 800 }
+                            }
+                        }
                     }
                 }
 
