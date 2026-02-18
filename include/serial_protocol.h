@@ -23,7 +23,7 @@
 #include "obd2_pids.h"
 
 // Maximum JSON output buffer size
-#define JSON_BUF_SIZE 1024
+#define JSON_BUF_SIZE 1536
 #define CMD_BUF_SIZE  256
 
 // Command types from Pi
@@ -56,7 +56,10 @@ static int serializeData(char *buf, int bufSize, VehicleData *d,
     int len = snprintf(buf, bufSize,
         "{\"obd\":{"
             "\"spd\":%d,\"rpm\":%d,\"ect\":%d,"
-            "\"thr\":%d,\"load\":%d"
+            "\"thr\":%d,\"load\":%d,"
+            "\"fuel_rate\":%.2f,\"fuel_lvl\":%.1f,"
+            "\"maf\":%.2f,\"iat\":%d,\"oil_t\":%d,"
+            "\"timing\":%.1f,\"o2v\":%.3f,\"fuel_pres\":%d"
         "},"
         "\"chg\":{"
             "\"v\":%.2f,\"a\":%.2f,\"set\":%.1f,"
@@ -65,6 +68,9 @@ static int serializeData(char *buf, int bufSize, VehicleData *d,
         "}",
         d->speed, d->rpm, d->ect,
         d->throttle, d->load,
+        d->fuelRate, d->fuelLevel,
+        d->maf, d->intakeAirTemp, d->oilTemp,
+        d->timingAdv, d->o2Voltage, d->fuelPressure,
         d->battV, d->battI, d->setA,
         d->tempT1, d->tempT2, d->tempAmb,
         d->targetCurrent, d->fault, d->alarm, d->status);

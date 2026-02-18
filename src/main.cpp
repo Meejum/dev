@@ -68,6 +68,15 @@ struct VehicleData {
     int tempT1 = 0, tempT2 = 0, tempAmb = 0;
     uint16_t fault = 0, alarm = 0, status = 0;
     bool canOk = false, rs485Ok = false;
+    // Extended OBD fields
+    float fuelRate = -1;       // L/h (PID 0x5E)
+    float fuelLevel = -1;      // % (PID 0x2F)
+    float maf = -1;            // g/s (PID 0x10)
+    int intakeAirTemp = -40;   // °C (PID 0x0F)
+    int oilTemp = -40;         // °C (PID 0x5C)
+    float timingAdv = 0;       // degrees (PID 0x0E)
+    float o2Voltage = -1;      // V (PID 0x14)
+    int fuelPressure = -1;     // kPa (PID 0x0A)
 };
 #endif
 
@@ -131,6 +140,41 @@ void readCoreOBD() {
 
     int rawLoad = queryOBD(PID_LOAD, 1);
     vdata.load = rawLoad >= 0 ? (rawLoad * 100) / 255 : -1;
+}
+
+// Read extended OBD2 PIDs (for trip computer, fuel, diagnostics)
+void readExtendedOBD() {
+    // Fuel Rate (PID 0x5E) — 2 bytes, scale 0.05
+    int rawFuelRate = queryOBD(0x5E, 2);
+    vdata.fuelRate = rawFuelRate >= 0 ? rawFuelRate * 0.05f : -1;
+
+    // Fuel Level (PID 0x2F) — 1 byte, scale 100/255
+    int rawFuelLvl = queryOBD(0x2F, 1);
+    vdata.fuelLevel = rawFuelLvl >= 0 ? (rawFuelLvl * 100.0f) / 255.0f : -1;
+
+    // MAF Air Flow (PID 0x10) — 2 bytes, scale 0.01
+    int rawMAF = queryOBD(0x10, 2);
+    vdata.maf = rawMAF >= 0 ? rawMAF * 0.01f : -1;
+
+    // Intake Air Temp (PID 0x0F) — 1 byte, offset -40
+    int rawIAT = queryOBD(0x0F, 1);
+    vdata.intakeAirTemp = rawIAT >= 0 ? rawIAT - 40 : -40;
+
+    // Engine Oil Temp (PID 0x5C) — 1 byte, offset -40
+    int rawOilT = queryOBD(0x5C, 1);
+    vdata.oilTemp = rawOilT >= 0 ? rawOilT - 40 : -40;
+
+    // Timing Advance (PID 0x0E) — 1 byte, scale 0.5, offset -64
+    int rawTiming = queryOBD(0x0E, 1);
+    vdata.timingAdv = rawTiming >= 0 ? rawTiming * 0.5f - 64.0f : 0;
+
+    // O2 Voltage B1S1 (PID 0x14) — 2 bytes, scale 0.005
+    int rawO2 = queryOBD(0x14, 2);
+    vdata.o2Voltage = rawO2 >= 0 ? (rawO2 >> 8) * 0.005f : -1;
+
+    // Fuel Pressure (PID 0x0A) — 1 byte, scale 3
+    int rawFuelPres = queryOBD(0x0A, 1);
+    vdata.fuelPressure = rawFuelPres >= 0 ? rawFuelPres * 3 : -1;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -445,6 +489,7 @@ void loop() {
         vdata.rs485Ok = false;
 
         readCoreOBD();
+        readExtendedOBD();
         readAllCharger();
         updateChargingLogic();
 
