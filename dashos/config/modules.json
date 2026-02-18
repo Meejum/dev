@@ -1,0 +1,12 @@
+{
+    "modules": [
+        {"id": "dashboard", "name": "Dashboard", "enabled": true, "icon": "dashboard.svg"},
+        {"id": "obd2", "name": "OBD2 Scanner", "enabled": true, "icon": "obd2.svg"},
+        {"id": "meshtastic", "name": "Meshtastic", "enabled": true, "icon": "meshtastic.svg"},
+        {"id": "dtc", "name": "Diagnostics", "enabled": true, "icon": "dtc.svg"},
+        {"id": "carplay", "name": "CarPlay", "enabled": true, "icon": "carplay.svg"},
+        {"id": "youtube", "name": "YouTube", "enabled": true, "icon": "youtube.svg"},
+        {"id": "maps", "name": "Maps", "enabled": false, "icon": "maps.svg"},
+        {"id": "settings", "name": "Settings", "enabled": true, "icon": "settings.svg"}
+    ]
+}
