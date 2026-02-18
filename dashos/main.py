@@ -268,6 +268,8 @@ def main():
     parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen kiosk mode')
     parser.add_argument('--screenshot', type=str, metavar='FILE',
                         help='Capture screenshot to FILE after rendering, then exit')
+    parser.add_argument('--screenshot-all', type=str, metavar='DIR',
+                        help='Capture screenshots of all pages to DIR, then exit')
     args = parser.parse_args()
 
     # Handle Ctrl+C gracefully
@@ -303,38 +305,69 @@ def main():
     if args.fullscreen:
         root.showFullScreen()
 
+    def grab_window_image():
+        """Grab window screenshot with fallback for different Qt backends"""
+        try:
+            return root.grabWindow()
+        except AttributeError:
+            screen = app.primaryScreen()
+            if screen:
+                pixmap = screen.grabWindow(0)
+                return pixmap.toImage()
+            return None
+
     # Screenshot mode: capture after UI renders, then exit
     if args.screenshot:
-        def take_screenshot():
-            # QQuickWindow.grabWindow() returns QImage in Qt6
-            img = root.grabWindow()
-            out_path = os.path.abspath(args.screenshot)
-            img.save(out_path)
-            print(f"Screenshot saved: {out_path} ({img.width()}x{img.height()})")
-            app.quit()
-
-        # For QQuickWindow, we need to ensure rendering happens first
         def request_grab():
-            # Use the QML grabToImage on contentItem as fallback
-            try:
-                img = root.grabWindow()
+            img = grab_window_image()
+            if img:
                 out_path = os.path.abspath(args.screenshot)
                 img.save(out_path)
                 print(f"Screenshot saved: {out_path} ({img.width()}x{img.height()})")
-            except (AttributeError, RuntimeError):
-                # Fallback: grab via screen
-                screen = app.primaryScreen()
-                if screen:
-                    pixmap = screen.grabWindow(0)
-                    out_path = os.path.abspath(args.screenshot)
-                    pixmap.save(out_path)
-                    print(f"Screenshot saved: {out_path} ({pixmap.width()}x{pixmap.height()})")
-                else:
-                    print("[ERROR] No screen available for screenshot")
+            else:
+                print("[ERROR] No screen available for screenshot")
             app.quit()
 
         # Allow 3 seconds for QML to fully render and demo data to populate
         QTimer.singleShot(3000, request_grab)
+
+    # Screenshot-all mode: cycle through all pages and capture each
+    if args.screenshot_all:
+        out_dir = os.path.abspath(args.screenshot_all)
+        os.makedirs(out_dir, exist_ok=True)
+
+        page_names = ["dashboard", "obd2_scanner", "meshtastic", "dtc_viewer", "media_player", "settings"]
+        stack_view = root.findChild(QObject, "stackView")
+
+        def capture_all_pages():
+            page_idx = [0]  # mutable counter for closure
+
+            def capture_next():
+                if page_idx[0] > 0:
+                    # Save screenshot of the previous page (rendered by now)
+                    prev = page_idx[0] - 1
+                    img = grab_window_image()
+                    if img:
+                        out_path = os.path.join(out_dir, f"{page_names[prev]}.png")
+                        img.save(out_path)
+                        w = img.width()
+                        h = img.height()
+                        print(f"  [{prev+1}/6] {out_path} ({w}x{h})")
+
+                if page_idx[0] < len(page_names):
+                    # Switch to the next page
+                    stack_view.setProperty("currentIndex", page_idx[0])
+                    page_idx[0] += 1
+                    # Wait 500ms for page to render before capturing
+                    QTimer.singleShot(500, capture_next)
+                else:
+                    print(f"All {len(page_names)} screenshots saved to {out_dir}/")
+                    app.quit()
+
+            capture_next()
+
+        # Allow 3 seconds for initial QML render + demo data
+        QTimer.singleShot(3000, capture_all_pages)
 
     sys.exit(app.exec())
 

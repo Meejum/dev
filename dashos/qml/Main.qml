@@ -132,6 +132,7 @@ ApplicationWindow {
         // ── MAIN CONTENT ───────────────────────────────
         StackLayout {
             id: stackView
+            objectName: "stackView"
             Layout.fillWidth: true
             Layout.fillHeight: true
 
