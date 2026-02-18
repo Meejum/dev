@@ -1043,15 +1043,24 @@ def main():
 
     def grab_window_image():
         """Grab window screenshot at device resolution (1024x600)"""
+        from PySide6.QtCore import Qt
+        # Try to grab from the QQuickWindow's render (best fidelity)
+        try:
+            img = root.grabWindow()
+            if img and not img.isNull():
+                if img.width() != DASHOS_WIDTH or img.height() != DASHOS_HEIGHT:
+                    img = img.scaled(DASHOS_WIDTH, DASHOS_HEIGHT,
+                                     Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                return img
+        except Exception:
+            pass
+        # Fallback: grab from primary screen
         screen = app.primaryScreen()
         if screen:
-            # Grab the entire screen content
             pixmap = screen.grabWindow(0)
             img = pixmap.toImage()
             if img and not img.isNull():
-                # Scale to exact device resolution if offscreen platform differs
                 if img.width() != DASHOS_WIDTH or img.height() != DASHOS_HEIGHT:
-                    from PySide6.QtCore import Qt
                     img = img.scaled(DASHOS_WIDTH, DASHOS_HEIGHT,
                                      Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
                 return img
