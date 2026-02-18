@@ -969,8 +969,8 @@ def main():
                     # Switch to the next page
                     stack_view.setProperty("currentIndex", page_idx[0])
                     page_idx[0] += 1
-                    # Wait 500ms for page to render before capturing
-                    QTimer.singleShot(500, capture_next)
+                    # Wait 2s for page to fully render before capturing
+                    QTimer.singleShot(2000, capture_next)
                 else:
                     print(f"All {len(page_names)} screenshots saved to {out_dir}/")
                     app.quit()
