@@ -398,7 +398,7 @@ class DashOSApp(QObject):
         self.dteChanged.emit()
 
         # ── Alert System ──
-        self._active_dtcs = ["P0301"]  # Demo: always have a misfire code
+        self._active_dtcs = []  # No active DTCs in demo by default
         self._check_alerts()
 
         # ── Media (demo playlist) ──
