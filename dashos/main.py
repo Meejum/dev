@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services.serial_bridge import SerialBridge
 from services.meshtastic_service import MeshtasticService
 from services.power_manager import PowerManager
+from services.update_service import UpdateService
 
 
 class DashOSApp(QObject):
@@ -98,6 +99,12 @@ class DashOSApp(QObject):
 
     # ── Meshtastic node signals ──
     nodeListJsonChanged = Signal()
+
+    # ── Update signals ──
+    updateAvailableChanged = Signal()
+    updateStatusChanged = Signal()
+    updateInProgressChanged = Signal()
+    updateLogChanged = Signal()
 
     def __init__(self, demo_mode=False):
         super().__init__()
@@ -171,10 +178,17 @@ class DashOSApp(QObject):
         # Meshtastic nodes
         self._node_list_json = "[]"
 
+        # Update state
+        self._update_available = False
+        self._update_status = "Not checked"
+        self._update_in_progress = False
+        self._update_log = ""
+
         # Services
         self._serial_bridge = None
         self._meshtastic = None
         self._power_mgr = None
+        self._update_service = None
 
         if not demo_mode:
             self._init_services()
@@ -195,6 +209,17 @@ class DashOSApp(QObject):
 
         self._meshtastic = MeshtasticService()
         self._power_mgr = PowerManager()
+
+        # Update service
+        self._update_service = UpdateService(
+            repo_url=config.get('ota_repo', ''),
+            branch=config.get('ota_branch', 'main')
+        )
+        self._update_service.updateAvailable.connect(self._on_update_available)
+        self._update_service.updateStatus.connect(self._on_update_status)
+        self._update_service.updateInProgress.connect(self._on_update_in_progress)
+        self._update_service.updateLog.connect(self._on_update_log)
+        self._update_service.start()
 
         # GPS polling timer (try gpsd every second)
         self._gps_timer = QTimer()
@@ -735,6 +760,19 @@ class DashOSApp(QObject):
     @Property(str, notify=nodeListJsonChanged)
     def nodeListJson(self): return self._node_list_json
 
+    # Update
+    @Property(bool, notify=updateAvailableChanged)
+    def updateAvailable(self): return self._update_available
+
+    @Property(str, notify=updateStatusChanged)
+    def updateStatus(self): return self._update_status
+
+    @Property(bool, notify=updateInProgressChanged)
+    def updateInProgress(self): return self._update_in_progress
+
+    @Property(str, notify=updateLogChanged)
+    def updateLog(self): return self._update_log
+
     # ── QML Slots (callable from UI) ────────────────────────
 
     @Slot()
@@ -791,6 +829,36 @@ class DashOSApp(QObject):
         """Send a preset Meshtastic message"""
         if self._meshtastic:
             self._meshtastic.send_message(text)
+
+    # ── Update callbacks ──
+
+    def _on_update_available(self, available):
+        self._update_available = available
+        self.updateAvailableChanged.emit()
+
+    def _on_update_status(self, status):
+        self._update_status = status
+        self.updateStatusChanged.emit()
+
+    def _on_update_in_progress(self, in_progress):
+        self._update_in_progress = in_progress
+        self.updateInProgressChanged.emit()
+
+    def _on_update_log(self, log_line):
+        self._update_log = log_line
+        self.updateLogChanged.emit()
+
+    @Slot()
+    def checkForUpdates(self):
+        """Manually trigger update check"""
+        if self._update_service:
+            self._update_service.checkForUpdates()
+
+    @Slot()
+    def applyUpdate(self):
+        """Apply available update"""
+        if self._update_service:
+            self._update_service.applyUpdate()
 
 
 def main():

@@ -162,6 +162,115 @@ Item {
                     }
                 }
 
+                // Software Update
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: updateCol.implicitHeight + 24
+                    color: "#111827"; radius: 12
+                    border.color: (dash && dash.updateAvailable) ? "#3b82f6" : "#334155"
+                    border.width: (dash && dash.updateAvailable) ? 2 : 1
+
+                    ColumnLayout {
+                        id: updateCol
+                        anchors.fill: parent; anchors.margins: 12; spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "SOFTWARE UPDATE"; color: "#3b82f6"; font.pixelSize: 13; font.bold: true }
+                            Item { Layout.fillWidth: true }
+                            // Update badge
+                            Rectangle {
+                                visible: dash ? dash.updateAvailable : false
+                                width: 70; height: 20; radius: 10
+                                color: "#1e3a5f"
+                                border.color: "#3b82f6"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "NEW"
+                                    color: "#60a5fa"
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                }
+                            }
+                        }
+
+                        // Status text
+                        Text {
+                            Layout.fillWidth: true
+                            text: dash ? dash.updateStatus : "Not checked"
+                            color: (dash && dash.updateAvailable) ? "#60a5fa" : "#94a3b8"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+
+                        // Update log (visible during/after update)
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: 40
+                            radius: 6
+                            color: "#0f172a"
+                            visible: dash ? (dash.updateInProgress || dash.updateLog !== "") : false
+
+                            Text {
+                                anchors.fill: parent; anchors.margins: 8
+                                text: dash ? dash.updateLog : ""
+                                color: "#94a3b8"
+                                font.pixelSize: 10
+                                font.family: "monospace"
+                                wrapMode: Text.WordWrap
+                                elide: Text.ElideRight
+                                maximumLineCount: 3
+                            }
+                        }
+
+                        // Action buttons
+                        RowLayout {
+                            spacing: 10
+
+                            // Check for updates
+                            Rectangle {
+                                width: 130; height: 32; radius: 8
+                                color: (dash && dash.updateInProgress) ? "#334155" : "#1e293b"
+                                border.color: "#3b82f6"
+                                opacity: (dash && dash.updateInProgress) ? 0.5 : 1.0
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: (dash && dash.updateInProgress) ? "CHECKING..." : "CHECK UPDATE"
+                                    color: "#3b82f6"; font.pixelSize: 11; font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: dash ? !dash.updateInProgress : true
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
+                                    onClicked: dash.checkForUpdates()
+                                }
+                            }
+
+                            // Install update (only visible when update available)
+                            Rectangle {
+                                width: 130; height: 32; radius: 8
+                                visible: dash ? dash.updateAvailable : false
+                                color: (dash && dash.updateInProgress) ? "#334155" : "#052e16"
+                                border.color: "#22c55e"
+                                opacity: (dash && dash.updateInProgress) ? 0.5 : 1.0
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: (dash && dash.updateInProgress) ? "UPDATING..." : "INSTALL UPDATE"
+                                    color: "#22c55e"; font.pixelSize: 11; font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: dash ? (!dash.updateInProgress && dash.updateAvailable) : false
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
+                                    onClicked: dash.applyUpdate()
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // System
                 Rectangle {
                     Layout.fillWidth: true
@@ -179,11 +288,6 @@ Item {
 
                         RowLayout {
                             spacing: 12
-                            Rectangle {
-                                width: 100; height: 32; radius: 8; color: "#1e293b"; border.color: "#3b82f6"
-                                Text { anchors.centerIn: parent; text: "CHECK OTA"; color: "#3b82f6"; font.pixelSize: 11; font.bold: true }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor }
-                            }
                             Rectangle {
                                 width: 80; height: 32; radius: 8; color: "#1e293b"; border.color: "#f59e0b"
                                 Text { anchors.centerIn: parent; text: "REBOOT"; color: "#f59e0b"; font.pixelSize: 11; font.bold: true }
