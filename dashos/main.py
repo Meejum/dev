@@ -19,6 +19,7 @@ import argparse
 import json
 import math
 import time
+import threading
 
 # Must set offscreen screen size BEFORE Qt is imported
 # Device: Waveshare 7" Touch LCD — 1024x600 native resolution
@@ -1115,7 +1116,7 @@ class DashOSApp(QObject):
     @Slot()
     def scanWifi(self):
         """Scan for available WiFi networks"""
-        import threading
+
         self._wifi_scanning = True
         self.wifiScanningChanged.emit()
 
@@ -1163,7 +1164,7 @@ class DashOSApp(QObject):
     @Slot(str)
     def connectWifi(self, ssid):
         """Connect to a WiFi network"""
-        import threading
+
         def _connect():
             if self._demo_mode:
                 import time as _t
@@ -1187,7 +1188,7 @@ class DashOSApp(QObject):
     @Slot()
     def scanBluetooth(self):
         """Scan for Bluetooth devices"""
-        import threading
+
         self._bt_scanning = True
         self.btScanningChanged.emit()
 
@@ -1232,7 +1233,7 @@ class DashOSApp(QObject):
     @Slot(str)
     def connectBluetooth(self, addr):
         """Connect to a Bluetooth device"""
-        import threading
+
         def _connect():
             if self._demo_mode:
                 import time as _t
@@ -1277,7 +1278,7 @@ class DashOSApp(QObject):
     @Slot()
     def downloadUaeMap(self):
         """Download UAE offline map (OSM PBF) to SD card"""
-        import threading
+
 
         if self._map_downloading:
             return
