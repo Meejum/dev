@@ -1,47 +1,86 @@
 /**
  * @file main.cpp
  * ESP32-S3-LCD-7B — Vehicle Dashboard + Charger Monitor
- * 
+ *
+ * Two build modes:
+ *   BRIDGE_MODE=1 — Headless serial bridge for Raspberry Pi (DashOS)
+ *   BRIDGE_MODE=0 — Standalone LVGL dashboard on 7" display (default)
+ *
  * Combines:
- *   - OBD-II via CAN bus (TWAI) for vehicle data
+ *   - OBD-II via CAN bus (TWAI) — full scanner with 50+ PIDs
  *   - Modbus RTU via RS485 for charger monitoring
- *   - LVGL 8.4 GUI on 1024×600 RGB display
- * 
+ *   - SD card CSV data logging
+ *   - (Bridge mode) JSON serial protocol to Raspberry Pi
+ *   - (Standalone) LVGL 8.4 GUI on 1024×600 RGB display
+ *
  * Target: Waveshare ESP32-S3-Touch-LCD-7B
  */
 
 #include <Arduino.h>
-#include <lvgl.h>
 #include <driver/twai.h>
 #include <Wire.h>
 
-// ─── Waveshare display panel library ─────────────────────────
-// These handle RGB LCD init, IO expander (CH32V003), backlight
+#include "board_config.h"
+#include "obd2_pids.h"
+#include "obd2_dtc.h"
+
+#ifndef BRIDGE_MODE
+#define BRIDGE_MODE 0
+#endif
+
+#if !BRIDGE_MODE
+// ─── Standalone display mode ─────────────────────────
+#include <lvgl.h>
 #include <ESP_Panel_Library.h>
 #include <ESP_IOExpander_Library.h>
-
-#include "board_config.h"
 #include "ui_dashboard.h"
 
-/* ══════════════════════════════════════════════════════════════
- * LVGL DISPLAY BUFFER & DRIVER
- * ══════════════════════════════════════════════════════════════*/
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t *buf1 = NULL;
 static lv_color_t *buf2 = NULL;
 static ESP_Panel *panel = NULL;
+#endif
+
+#if BRIDGE_MODE
+// ─── Bridge mode — serial protocol ──────────────────
+#include "serial_protocol.h"
+static char json_buf[JSON_BUF_SIZE];
+static char cmd_buf[CMD_BUF_SIZE];
+
+// DTC storage for bridge mode
+static DTCResult stored_dtcs;
+static bool dtc_scan_requested = false;
+static bool dtc_clear_requested = false;
+#endif
+
+// ─── IO Expander (needed in both modes for CAN mux) ──
+#include <ESP_IOExpander_Library.h>
 static ESP_IOExpander *io_expander = NULL;
-
-#define LVGL_BUF_LINES  40  // Number of lines in draw buffer
-
-// Forward declarations
-void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
-void lvgl_tick_task(void *arg);
 
 /* ══════════════════════════════════════════════════════════════
  * GLOBAL VEHICLE + CHARGER DATA
  * ══════════════════════════════════════════════════════════════*/
-VehicleData vdata;  // Defined in ui_dashboard.h
+#if BRIDGE_MODE
+// Minimal VehicleData for bridge mode (no LVGL dependency)
+struct VehicleData {
+    int speed = -1, rpm = -1, ect = -1, throttle = -1, load = -1;
+    float battV = 0, battI = 0, setA = 12.0f, targetCurrent = 12.0f;
+    int tempT1 = 0, tempT2 = 0, tempAmb = 0;
+    uint16_t fault = 0, alarm = 0, status = 0;
+    bool canOk = false, rs485Ok = false;
+    // Extended OBD fields
+    float fuelRate = -1;       // L/h (PID 0x5E)
+    float fuelLevel = -1;      // % (PID 0x2F)
+    float maf = -1;            // g/s (PID 0x10)
+    int intakeAirTemp = -40;   // °C (PID 0x0F)
+    int oilTemp = -40;         // °C (PID 0x5C)
+    float timingAdv = 0;       // degrees (PID 0x0E)
+    float o2Voltage = -1;      // V (PID 0x14)
+    int fuelPressure = -1;     // kPa (PID 0x0A)
+};
+#endif
+
+VehicleData vdata;
 
 /* ══════════════════════════════════════════════════════════════
  * MODBUS CRC16 CALCULATION
@@ -86,7 +125,8 @@ int queryOBD(uint8_t pid, int responseBytes) {
     return -1;
 }
 
-void readAllOBD() {
+// Read core OBD2 PIDs (fast — for dashboard display)
+void readCoreOBD() {
     vdata.speed = queryOBD(PID_SPEED, 1);
 
     int rawRPM = queryOBD(PID_RPM, 2);
@@ -100,6 +140,41 @@ void readAllOBD() {
 
     int rawLoad = queryOBD(PID_LOAD, 1);
     vdata.load = rawLoad >= 0 ? (rawLoad * 100) / 255 : -1;
+}
+
+// Read extended OBD2 PIDs (for trip computer, fuel, diagnostics)
+void readExtendedOBD() {
+    // Fuel Rate (PID 0x5E) — 2 bytes, scale 0.05
+    int rawFuelRate = queryOBD(0x5E, 2);
+    vdata.fuelRate = rawFuelRate >= 0 ? rawFuelRate * 0.05f : -1;
+
+    // Fuel Level (PID 0x2F) — 1 byte, scale 100/255
+    int rawFuelLvl = queryOBD(0x2F, 1);
+    vdata.fuelLevel = rawFuelLvl >= 0 ? (rawFuelLvl * 100.0f) / 255.0f : -1;
+
+    // MAF Air Flow (PID 0x10) — 2 bytes, scale 0.01
+    int rawMAF = queryOBD(0x10, 2);
+    vdata.maf = rawMAF >= 0 ? rawMAF * 0.01f : -1;
+
+    // Intake Air Temp (PID 0x0F) — 1 byte, offset -40
+    int rawIAT = queryOBD(0x0F, 1);
+    vdata.intakeAirTemp = rawIAT >= 0 ? rawIAT - 40 : -40;
+
+    // Engine Oil Temp (PID 0x5C) — 1 byte, offset -40
+    int rawOilT = queryOBD(0x5C, 1);
+    vdata.oilTemp = rawOilT >= 0 ? rawOilT - 40 : -40;
+
+    // Timing Advance (PID 0x0E) — 1 byte, scale 0.5, offset -64
+    int rawTiming = queryOBD(0x0E, 1);
+    vdata.timingAdv = rawTiming >= 0 ? rawTiming * 0.5f - 64.0f : 0;
+
+    // O2 Voltage B1S1 (PID 0x14) — 2 bytes, scale 0.005
+    int rawO2 = queryOBD(0x14, 2);
+    vdata.o2Voltage = rawO2 >= 0 ? (rawO2 >> 8) * 0.005f : -1;
+
+    // Fuel Pressure (PID 0x0A) — 1 byte, scale 3
+    int rawFuelPres = queryOBD(0x0A, 1);
+    vdata.fuelPressure = rawFuelPres >= 0 ? rawFuelPres * 3 : -1;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -116,7 +191,6 @@ bool readRegister(uint16_t addr, uint16_t *val) {
     req[6] = crc & 0xFF;
     req[7] = crc >> 8;
 
-    // RS485 auto-direction — just write
     Serial1.write(req, 8);
     Serial1.flush();
 
@@ -152,7 +226,7 @@ bool setCurrent(float amp) {
     Serial1.write(buf, 8);
     Serial1.flush();
 
-    uint8_t resp[8] = {0};  // Initialize buffer
+    uint8_t resp[8] = {0};
     int len = 0;
     unsigned long t0 = millis();
     while (len < 8 && millis() - t0 < 200) {
@@ -182,13 +256,13 @@ void updateChargingLogic() {
     bool safe = true;
     if (vdata.tempT1 > 80 || vdata.tempT2 > 80 || vdata.tempAmb > 80) safe = false;
     if (vdata.battV < 24.0f || vdata.battV > 29.6f) safe = false;
-    if (vdata.fault & 0x0040) safe = false;    // Over-temp fault
-    if (vdata.alarm & 0x0003) safe = false;    // Derating alarm
+    if (vdata.fault & 0x0040) safe = false;
+    if (vdata.alarm & 0x0003) safe = false;
 
-    float target = 12.0f;  // Default reduced rate
+    float target = 12.0f;
     if (vdata.speed > 30 && vdata.rpm > 1000 &&
         vdata.ect >= 60 && vdata.ect <= 100 && safe) {
-        target = 30.0f;    // Full charging rate
+        target = 30.0f;
     }
 
     vdata.targetCurrent = target;
@@ -202,7 +276,26 @@ void updateChargingLogic() {
 }
 
 /* ══════════════════════════════════════════════════════════════
- * LVGL FLUSH CALLBACK
+ * INIT: IO EXPANDER + CAN MUX (both modes)
+ * ══════════════════════════════════════════════════════════════*/
+void initIOExpander() {
+    Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
+
+    io_expander = new esp_expander::CH422G(I2C_SDA, I2C_SCL, IO_EXP_ADDR);
+    io_expander->init();
+    io_expander->begin();
+
+    io_expander->pinMode(EXIO_CAN_SEL, OUTPUT);
+    io_expander->pinMode(EXIO_SD_CS, OUTPUT);
+
+    // Set CAN mode (not USB) — CRITICAL for OBD-II
+    io_expander->digitalWrite(EXIO_CAN_SEL, HIGH);
+    Serial.println("[INIT] CAN/USB mux set to CAN mode");
+}
+
+#if !BRIDGE_MODE
+/* ══════════════════════════════════════════════════════════════
+ * STANDALONE MODE: DISPLAY + LVGL
  * ══════════════════════════════════════════════════════════════*/
 void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
     if (panel) {
@@ -216,70 +309,42 @@ void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_
     lv_disp_flush_ready(drv);
 }
 
-/* ══════════════════════════════════════════════════════════════
- * INIT: DISPLAY + IO EXPANDER + LVGL
- * ══════════════════════════════════════════════════════════════*/
 void initDisplay() {
     Serial.println("[INIT] Starting display initialization...");
 
-    // ── Init I2C for IO expander ──
-    Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
-
-    // ── Init IO Expander (CH32V003) ──
-    // NOTE: The 7B board uses a CH32V003 MCU as IO expander
-    // accessed via I2C at address 0x24
-    // The ESP32_IO_Expander library handles this
-    io_expander = new esp_expander::CH422G(I2C_SDA, I2C_SCL, IO_EXP_ADDR);
-    io_expander->init();
-    io_expander->begin();
-
-    // Configure IO expander pins
     io_expander->pinMode(EXIO_BACKLIGHT, OUTPUT);
     io_expander->pinMode(EXIO_LCD_VDD, OUTPUT);
-    io_expander->pinMode(EXIO_CAN_SEL, OUTPUT);
-    io_expander->pinMode(EXIO_SD_CS, OUTPUT);
     io_expander->pinMode(EXIO_TOUCH_RST, OUTPUT);
 
-    // Enable LCD power and backlight
     io_expander->digitalWrite(EXIO_LCD_VDD, HIGH);
     delay(10);
     io_expander->digitalWrite(EXIO_BACKLIGHT, HIGH);
 
-    // ⚠️ Set CAN mode (not USB) — CRITICAL for OBD-II
-    io_expander->digitalWrite(EXIO_CAN_SEL, HIGH);
-    Serial.println("[INIT] CAN/USB mux set to CAN mode");
-
-    // Touch reset (even if no touch panel, won't hurt)
     io_expander->digitalWrite(EXIO_TOUCH_RST, LOW);
     delay(10);
     io_expander->digitalWrite(EXIO_TOUCH_RST, HIGH);
     delay(50);
 
-    // ── Init ESP_Panel (handles RGB LCD setup) ──
     panel = new ESP_Panel();
     panel->init();
     panel->begin();
-    Serial.println("[INIT] LCD panel started (1024×600)");
+    Serial.println("[INIT] LCD panel started (1024x600)");
 
-    // ── Init LVGL ──
     lv_init();
 
-    // Allocate draw buffers in PSRAM
-    size_t buf_size = LCD_WIDTH * LVGL_BUF_LINES * sizeof(lv_color_t);
+    size_t buf_size = LCD_WIDTH * 40 * sizeof(lv_color_t);
     buf1 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
     buf2 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
 
     if (!buf1 || !buf2) {
         Serial.println("[ERROR] Failed to allocate LVGL buffers!");
-        // Fallback: single buffer, smaller
         buf_size = LCD_WIDTH * 20 * sizeof(lv_color_t);
         buf1 = (lv_color_t *)malloc(buf_size);
         buf2 = NULL;
     }
 
-    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LCD_WIDTH * LVGL_BUF_LINES);
+    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LCD_WIDTH * 40);
 
-    // Register display driver
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = LCD_WIDTH;
@@ -291,6 +356,7 @@ void initDisplay() {
 
     Serial.println("[INIT] LVGL initialized");
 }
+#endif
 
 /* ══════════════════════════════════════════════════════════════
  * INIT: CAN BUS (TWAI)
@@ -317,27 +383,97 @@ void initRS485() {
     Serial.println("[INIT] RS485 started (9600 baud, auto-dir)");
 }
 
+#if BRIDGE_MODE
+/* ══════════════════════════════════════════════════════════════
+ * BRIDGE MODE: Process commands from Pi
+ * ══════════════════════════════════════════════════════════════*/
+void processCommand(ParsedCommand &cmd) {
+    switch (cmd.type) {
+        case CMD_SCAN_DTC:
+            stored_dtcs = readDTCs(0x03);
+            Serial.printf("{\"dtc_scan\":{\"count\":%d,\"codes\":[", stored_dtcs.count);
+            for (int i = 0; i < stored_dtcs.count; i++) {
+                if (i > 0) Serial.print(",");
+                Serial.printf("\"%s\"", stored_dtcs.codes[i].code);
+            }
+            Serial.println("]}}");
+            break;
+
+        case CMD_CLEAR_DTC:
+            if (clearDTCs()) {
+                Serial.println("{\"dtc_clear\":\"ok\"}");
+                stored_dtcs.count = 0;
+            } else {
+                Serial.println("{\"dtc_clear\":\"failed\"}");
+            }
+            break;
+
+        case CMD_SET_CURRENT:
+            if (setCurrent(cmd.floatVal)) {
+                lastSetCurrent = cmd.floatVal;
+                vdata.setA = cmd.floatVal;
+                Serial.printf("{\"set_current\":\"ok\",\"val\":%.1f}\n", cmd.floatVal);
+            } else {
+                Serial.println("{\"set_current\":\"failed\"}");
+            }
+            break;
+
+        case CMD_GET_SUPPORTED_PIDS:
+            sendSupportedPIDs(Serial);
+            break;
+
+        case CMD_SET_LOG_INTERVAL:
+            Serial.printf("{\"log_interval\":%d}\n", cmd.intVal);
+            break;
+
+        case CMD_SHUTDOWN:
+            Serial.println("{\"shutdown\":\"acknowledged\"}");
+            delay(100);
+            esp_deep_sleep_start();
+            break;
+
+        default:
+            break;
+    }
+}
+#endif
+
 /* ══════════════════════════════════════════════════════════════
  * SETUP
  * ══════════════════════════════════════════════════════════════*/
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(BRIDGE_BAUD);
     delay(300);
 
-    Serial.println("\n══════════════════════════════════════════════");
+#if BRIDGE_MODE
+    Serial.println("{\"boot\":\"DashOS ESP32 Bridge v1.0\"}");
+    Serial.println("{\"mode\":\"bridge\",\"baud\":115200}");
+#else
+    Serial.println("\n==============================================");
     Serial.println("  ESP32-S3-LCD-7B Vehicle Dashboard");
     Serial.println("  OBD-II + Charger Monitor + LVGL GUI");
-    Serial.println("══════════════════════════════════════════════\n");
+    Serial.println("==============================================\n");
+#endif
 
-    // Init hardware
+    // Init IO expander (both modes need it for CAN mux)
+    initIOExpander();
+
+#if !BRIDGE_MODE
+    // Init display + LVGL (standalone mode only)
     initDisplay();
+#endif
+
+    // Init CAN bus + RS485 (both modes)
     initCAN();
     initRS485();
 
+#if !BRIDGE_MODE
     // Build LVGL UI
     ui_dashboard_create();
-
     Serial.println("\n[OK] Dashboard ready!\n");
+#else
+    Serial.println("{\"status\":\"ready\",\"can\":true,\"rs485\":true}");
+#endif
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -352,15 +488,38 @@ void loop() {
         vdata.canOk = false;
         vdata.rs485Ok = false;
 
-        readAllOBD();
+        readCoreOBD();
+        readExtendedOBD();
         readAllCharger();
         updateChargingLogic();
 
+#if BRIDGE_MODE
+        // Send JSON data to Pi
+        const char *dtcPtrs[MAX_DTCS];
+        for (int i = 0; i < stored_dtcs.count; i++) {
+            dtcPtrs[i] = stored_dtcs.codes[i].code;
+        }
+        serializeData(json_buf, JSON_BUF_SIZE, &vdata,
+                      dtcPtrs, stored_dtcs.count, false, 0);
+        Serial.print(json_buf);
+#else
         // Update LVGL labels
         ui_dashboard_update(&vdata);
+#endif
     }
 
+#if BRIDGE_MODE
+    // ── Check for commands from Pi ──
+    if (readCommandLine(Serial, cmd_buf, CMD_BUF_SIZE)) {
+        ParsedCommand cmd = parseCommand(cmd_buf);
+        if (cmd.type != CMD_NONE) {
+            processCommand(cmd);
+        }
+    }
+    delay(1);  // Minimal delay in bridge mode
+#else
     // ── LVGL timer handler ──
     lv_timer_handler();
     delay(5);
+#endif
 }

@@ -109,7 +109,20 @@
 #define USB_DP  GPIO_NUM_20     // Shared with CAN_TX
 
 /* ════════════════════════════════════════════════════════════════
- * OBD-II PID DEFINITIONS
+ * BRIDGE MODE — UART to Raspberry Pi
+ * Uses UART0 (USB-UART bridge) for Pi communication
+ * Debug output redirected to SD card when in bridge mode
+ * ════════════════════════════════════════════════════════════════*/
+#define BRIDGE_BAUD     115200      // Serial baud for Pi bridge
+
+/* ════════════════════════════════════════════════════════════════
+ * IGNITION SENSE — Power management
+ * Monitor ACC/IGN wire to auto-shutdown Pi
+ * ════════════════════════════════════════════════════════════════*/
+#define IGN_SENSE_PIN   GPIO_NUM_6  // Free GPIO — connect to ACC via voltage divider
+
+/* ════════════════════════════════════════════════════════════════
+ * OBD-II PID DEFINITIONS (legacy — full table in obd2_pids.h)
  * ════════════════════════════════════════════════════════════════*/
 #define PID_RPM          0x0C
 #define PID_SPEED        0x0D
