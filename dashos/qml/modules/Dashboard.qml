@@ -21,7 +21,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumWidth: 350
+            Layout.minimumWidth: 340
             color: "#111827"
             radius: 12
             border.color: "#334155"
@@ -32,11 +32,40 @@ Item {
                 anchors.margins: 10
                 spacing: 6
 
-                Text {
-                    text: "\u2699 OBD-II DATA"
-                    color: "#f59e0b"
-                    font.pixelSize: 13
-                    font.bold: true
+                // Header with clock
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "\u2699 OBD-II DATA"
+                        color: "#f59e0b"
+                        font.pixelSize: 13
+                        font.bold: true
+                    }
+                    Item { Layout.fillWidth: true }
+                    // Clock display
+                    Column {
+                        spacing: 0
+                        Text {
+                            text: dash ? dash.currentTime : "00:00:00"
+                            color: "#f1f5f9"
+                            font.pixelSize: 14
+                            font.bold: true
+                            font.family: "monospace"
+                            anchors.right: parent.right
+                        }
+                        Text {
+                            text: dash ? dash.currentDate : ""
+                            color: "#475569"
+                            font.pixelSize: 8
+                            anchors.right: parent.right
+                        }
+                        Text {
+                            text: dash ? dash.timezoneName + " (GMT+" + dash.timezoneOffset.toFixed(0) + ")" : ""
+                            color: "#334155"
+                            font.pixelSize: 7
+                            anchors.right: parent.right
+                        }
+                    }
                 }
 
                 // Gauge grid
@@ -103,7 +132,6 @@ Item {
                             }
                             Item { Layout.fillWidth: true }
 
-                            // Load bar
                             Rectangle {
                                 Layout.preferredWidth: 80
                                 height: 8
@@ -130,13 +158,13 @@ Item {
             }
         }
 
-        // ── CENTER: Trip Computer + GPS ────────────────
+        // ── CENTER: Trip (Since Start + Since Reset) + GPS ────
         ColumnLayout {
             Layout.fillHeight: true
-            Layout.preferredWidth: 180
-            spacing: 8
+            Layout.preferredWidth: 190
+            spacing: 6
 
-            // Trip Computer
+            // ── SINCE START (never resets) ──
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -148,25 +176,57 @@ Item {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 4
+                    anchors.margins: 8
+                    spacing: 3
+
+                    Text {
+                        text: "\u23f1 SINCE START"
+                        color: "#f59e0b"
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+
+                    TripRow { label: "DRIVE"; value: dash ? dash.startTime : "---"; valueColor: "#f1f5f9" }
+                    TripRow { label: "DIST"; value: dash ? dash.startDistance.toFixed(1) + " km" : "---"; valueColor: "#06b6d4" }
+                    TripRow { label: "AVG"; value: dash ? dash.startAvgSpeed.toFixed(0) + " km/h" : "---"; valueColor: "#3b82f6" }
+                    TripRow { label: "IAT\u00d8"; value: dash ? dash.startIntakeTempAvg.toFixed(0) + " \u00b0C" : "---"; valueColor: "#f59e0b" }
+
+                    Item { Layout.fillHeight: true }
+                }
+            }
+
+            // ── SINCE RESET (resettable trip) ──
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: 4
+                color: "#111827"
+                radius: 12
+                border.color: "#334155"
+                border.width: 1
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 3
 
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "\ud83d\udcca TRIP"
+                            text: "\ud83d\udcca SINCE RESET"
                             color: "#06b6d4"
-                            font.pixelSize: 12
+                            font.pixelSize: 11
                             font.bold: true
                         }
                         Item { Layout.fillWidth: true }
+                        // Reset button
                         Rectangle {
-                            width: 50; height: 20; radius: 4
-                            color: "#1e293b"; border.color: "#334155"
+                            width: 50; height: 18; radius: 4
+                            color: "#1e293b"; border.color: "#ef4444"
                             Text {
                                 anchors.centerIn: parent
                                 text: "RESET"
-                                color: "#94a3b8"
+                                color: "#ef4444"
                                 font.pixelSize: 8
                                 font.bold: true
                             }
@@ -178,7 +238,6 @@ Item {
                         }
                     }
 
-                    // Trip stats
                     TripRow { label: "DIST"; value: dash ? dash.tripDistance.toFixed(1) + " km" : "---"; valueColor: "#06b6d4" }
                     TripRow { label: "TIME"; value: dash ? dash.tripTime : "---"; valueColor: "#f1f5f9" }
                     TripRow { label: "AVG"; value: dash ? dash.tripAvgSpeed.toFixed(0) + " km/h" : "---"; valueColor: "#3b82f6" }
@@ -218,7 +277,7 @@ Item {
                 }
             }
 
-            // GPS Widget
+            // ── GPS Widget ──
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -230,74 +289,68 @@ Item {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 4
+                    anchors.margins: 8
+                    spacing: 3
 
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
                             text: "\ud83d\udccd GPS"
                             color: "#22c55e"
-                            font.pixelSize: 12
+                            font.pixelSize: 11
                             font.bold: true
                         }
                         Item { Layout.fillWidth: true }
                         Rectangle {
-                            width: 50; height: 16; radius: 4
+                            width: 46; height: 14; radius: 4
                             color: (dash && dash.gpsFixText !== "No Fix") ? "#052e16" : "#450a0a"
                             Text {
                                 anchors.centerIn: parent
                                 text: dash ? dash.gpsFixText : "---"
                                 color: (dash && dash.gpsFixText !== "No Fix") ? "#22c55e" : "#ef4444"
-                                font.pixelSize: 8
+                                font.pixelSize: 7
                                 font.bold: true
                             }
                         }
                     }
 
-                    // Coordinates
                     Text {
                         text: dash ? dash.gpsLat.toFixed(4) + "\u00b0" + (dash.gpsLat >= 0 ? "N" : "S") : "---"
                         color: "#f1f5f9"
-                        font.pixelSize: 12
+                        font.pixelSize: 11
                         font.family: "monospace"
                     }
                     Text {
                         text: dash ? dash.gpsLon.toFixed(4) + "\u00b0" + (dash.gpsLon >= 0 ? "E" : "W") : "---"
                         color: "#f1f5f9"
-                        font.pixelSize: 12
+                        font.pixelSize: 11
                         font.family: "monospace"
                     }
 
-                    // Heading + compass
                     RowLayout {
                         Layout.fillWidth: true
-                        Text {
-                            text: "HDG"
-                            color: "#94a3b8"
-                            font.pixelSize: 10
-                        }
+                        Text { text: "HDG"; color: "#94a3b8"; font.pixelSize: 9 }
                         Text {
                             text: {
                                 var h = dash ? dash.gpsHeading : 0
                                 return headingToCardinal(h) + " " + Math.round(h) + "\u00b0"
                             }
                             color: "#06b6d4"
-                            font.pixelSize: 13
+                            font.pixelSize: 12
                             font.bold: true
                         }
                         Item { Layout.fillWidth: true }
                         // Mini compass
                         Item {
-                            width: 28; height: 28
+                            width: 24; height: 24
                             Rectangle {
                                 anchors.fill: parent
-                                radius: 14
+                                radius: 12
                                 color: "#1e293b"
                                 border.color: "#334155"
                             }
                             Rectangle {
-                                width: 3; height: 10; radius: 1.5
+                                width: 2; height: 8; radius: 1
                                 color: "#ef4444"
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 anchors.top: parent.top
@@ -309,20 +362,19 @@ Item {
                         }
                     }
 
-                    // Altitude + satellites
                     RowLayout {
                         Layout.fillWidth: true
-                        Text { text: "ALT"; color: "#94a3b8"; font.pixelSize: 10 }
+                        Text { text: "ALT"; color: "#94a3b8"; font.pixelSize: 9 }
                         Text {
                             text: dash ? dash.gpsAlt.toFixed(0) + "m" : "---"
-                            color: "#f1f5f9"; font.pixelSize: 11
+                            color: "#f1f5f9"; font.pixelSize: 10
                         }
                         Item { Layout.fillWidth: true }
-                        Text { text: "SAT"; color: "#94a3b8"; font.pixelSize: 10 }
+                        Text { text: "SAT"; color: "#94a3b8"; font.pixelSize: 9 }
                         Text {
                             text: dash ? dash.gpsSatellites.toString() : "0"
                             color: (dash && dash.gpsSatellites >= 4) ? "#22c55e" : "#f59e0b"
-                            font.pixelSize: 11; font.bold: true
+                            font.pixelSize: 10; font.bold: true
                         }
                     }
 
@@ -347,50 +399,113 @@ Item {
                 anchors.margins: 10
                 spacing: 5
 
-                RowLayout {
-                    Layout.fillWidth: true
-
-                    Text {
-                        text: "\ud83d\udd0b CHARGER"
-                        color: (dash && dash.chargerEnabled) ? "#22c55e" : "#ef4444"
-                        font.pixelSize: 13
-                        font.bold: true
+                // Header
+                Text {
+                    text: "\ud83d\udd0b CHARGER"
+                    color: {
+                        if (!dash) return "#94a3b8"
+                        if (dash.chargerMode === "off") return "#ef4444"
+                        if (dash.chargerMode === "limit") return "#f59e0b"
+                        return "#22c55e"
                     }
+                    font.pixelSize: 13
+                    font.bold: true
+                }
 
-                    Item { Layout.fillWidth: true }
+                // ── Three-state charger control: OFF / LIMIT / ON ──
+                Row {
+                    Layout.fillWidth: true
+                    spacing: 4
 
-                    // DC Charge ON/OFF toggle button
+                    // OFF button
                     Rectangle {
-                        width: 56; height: 24; radius: 12
-                        color: (dash && dash.chargerEnabled) ? "#166534" : "#450a0a"
-                        border.color: (dash && dash.chargerEnabled) ? "#22c55e" : "#ef4444"
-                        border.width: 1
+                        width: (parent.width - 8) / 3; height: 28; radius: 6
+                        color: (dash && dash.chargerMode === "off") ? "#450a0a" : "#1e293b"
+                        border.color: "#ef4444"
+                        border.width: (dash && dash.chargerMode === "off") ? 2 : 1
 
-                        // Sliding knob
-                        Rectangle {
-                            id: toggleKnob
-                            width: 18; height: 18; radius: 9
-                            color: (dash && dash.chargerEnabled) ? "#22c55e" : "#ef4444"
-                            anchors.verticalCenter: parent.verticalCenter
-                            x: (dash && dash.chargerEnabled) ? parent.width - width - 3 : 3
-                            Behavior on x { NumberAnimation { duration: 150 } }
-                        }
-
-                        // ON/OFF label
                         Text {
                             anchors.centerIn: parent
-                            anchors.horizontalCenterOffset: (dash && dash.chargerEnabled) ? -8 : 8
-                            text: (dash && dash.chargerEnabled) ? "ON" : "OFF"
-                            color: "#f1f5f9"
-                            font.pixelSize: 8
+                            text: "OFF"
+                            color: "#ef4444"
+                            font.pixelSize: 10
                             font.bold: true
                         }
-
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: dash.toggleCharger()
+                            onClicked: dash.setChargerMode("off")
                             cursorShape: Qt.PointingHandCursor
                         }
+                    }
+
+                    // LIMIT button
+                    Rectangle {
+                        width: (parent.width - 8) / 3; height: 28; radius: 6
+                        color: (dash && dash.chargerMode === "limit") ? "#422006" : "#1e293b"
+                        border.color: "#f59e0b"
+                        border.width: (dash && dash.chargerMode === "limit") ? 2 : 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "LIMIT"
+                            color: "#f59e0b"
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: dash.setChargerMode("limit")
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                    }
+
+                    // ON button
+                    Rectangle {
+                        width: (parent.width - 8) / 3; height: 28; radius: 6
+                        color: (dash && dash.chargerMode === "on") ? "#052e16" : "#1e293b"
+                        border.color: "#22c55e"
+                        border.width: (dash && dash.chargerMode === "on") ? 2 : 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "ON"
+                            color: "#22c55e"
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: dash.setChargerMode("on")
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                    }
+                }
+
+                // Limit slider (visible only in LIMIT mode)
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: dash ? dash.chargerMode === "limit" : false
+                    spacing: 4
+
+                    Text { text: "LIM"; color: "#f59e0b"; font.pixelSize: 9 }
+                    Slider {
+                        Layout.fillWidth: true
+                        from: 1; to: 30; value: dash ? dash.chargerLimit : 15; stepSize: 1
+                        onMoved: dash.setChargerLimit(value)
+                        background: Rectangle {
+                            width: parent.availableWidth; height: 4; radius: 2; color: "#1e293b"
+                            y: parent.topPadding + parent.availableHeight / 2 - height / 2
+                            Rectangle { width: parent.parent.visualPosition * parent.width; height: parent.height; radius: 2; color: "#f59e0b" }
+                        }
+                        handle: Rectangle {
+                            x: parent.leftPadding + parent.visualPosition * (parent.availableWidth - width)
+                            y: parent.topPadding + parent.availableHeight / 2 - height / 2
+                            width: 14; height: 14; radius: 7; color: "#f59e0b"
+                        }
+                    }
+                    Text {
+                        text: dash ? dash.chargerLimit.toFixed(0) + "A" : "15A"
+                        color: "#f59e0b"; font.pixelSize: 10; font.bold: true
                     }
                 }
 
@@ -403,7 +518,7 @@ Item {
 
                 Item { Layout.fillHeight: true }
 
-                // Now Playing mini widget (always visible on dashboard)
+                // Now Playing mini widget
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 44
@@ -435,7 +550,6 @@ Item {
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                             }
-                            // Mini progress bar
                             Rectangle {
                                 width: 50; height: 4; radius: 2; color: "#1e293b"
                                 Rectangle {
@@ -451,18 +565,31 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 50
-                    color: (dash && !dash.chargerEnabled) ? "#1c1917" : "#052e16"
-                    border.color: (dash && !dash.chargerEnabled) ? "#57534e" : "#166534"
+                    color: {
+                        if (!dash) return "#052e16"
+                        if (dash.chargerMode === "off") return "#1c1917"
+                        if (dash.chargerMode === "limit") return "#422006"
+                        return "#052e16"
+                    }
+                    border.color: {
+                        if (!dash) return "#166534"
+                        if (dash.chargerMode === "off") return "#57534e"
+                        if (dash.chargerMode === "limit") return "#92400e"
+                        return "#166534"
+                    }
                     border.width: 1
                     radius: 10
 
                     Text {
                         anchors.fill: parent
                         anchors.margins: 8
-                        text: (dash && !dash.chargerEnabled)
-                              ? "\u25cf DC CHARGE OFF"
-                              : "\u2713 " + (dash ? dash.faultText : "---")
-                        color: (dash && !dash.chargerEnabled) ? "#ef4444" : "#22c55e"
+                        text: dash ? ("\u2713 " + dash.faultText) : "---"
+                        color: {
+                            if (!dash) return "#22c55e"
+                            if (dash.chargerMode === "off") return "#ef4444"
+                            if (dash.chargerMode === "limit") return "#f59e0b"
+                            return "#22c55e"
+                        }
                         font.pixelSize: 11
                         wrapMode: Text.WordWrap
                         verticalAlignment: Text.AlignVCenter

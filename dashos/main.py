@@ -98,8 +98,22 @@ class DashOSApp(QObject):
     trackDurationChanged = Signal()
     isPlayingChanged = Signal()
 
-    # ── Charger enable signal ──
+    # ── Charger mode signals ──
     chargerEnabledChanged = Signal()
+    chargerModeChanged = Signal()
+    chargerLimitChanged = Signal()
+
+    # ── Clock / timezone signals ──
+    currentTimeChanged = Signal()
+    currentDateChanged = Signal()
+    timezoneOffsetChanged = Signal()
+    timezoneNameChanged = Signal()
+
+    # ── Since-start stats signals ──
+    startDistanceChanged = Signal()
+    startTimeChanged = Signal()
+    startAvgSpeedChanged = Signal()
+    startIntakeTempAvgChanged = Signal()
 
     # ── Mode signals ──
     hudModeChanged = Signal()
@@ -125,6 +139,16 @@ class DashOSApp(QObject):
     mapDownloadingChanged = Signal()
     mapDownloadProgressChanged = Signal()
 
+    # ── WiFi / Bluetooth signals ──
+    wifiListChanged = Signal()
+    wifiScanningChanged = Signal()
+    wifiConnectedChanged = Signal()
+    wifiConnectedNameChanged = Signal()
+    btListChanged = Signal()
+    btScanningChanged = Signal()
+    btConnectedChanged = Signal()
+    btConnectedNameChanged = Signal()
+
     def __init__(self, demo_mode=False):
         super().__init__()
         self._demo_mode = demo_mode
@@ -146,6 +170,23 @@ class DashOSApp(QObject):
         self._fault_text = "Initializing..."
         self._uptime = "00:00:00"
         self._charger_enabled = True
+        self._charger_mode = "on"   # "off", "limit", "on"
+        self._charger_limit = 15.0  # Amps limit when in "limit" mode
+
+        # Clock / timezone (Abu Dhabi = +4:00 GMT)
+        self._tz_offset_hours = 4.0
+        self._tz_name = "Abu Dhabi"
+        self._current_time = ""
+        self._current_date = ""
+
+        # Since-start stats (never reset, only on app restart)
+        self._start_distance = 0.0
+        self._start_time_secs = 0
+        self._start_time = "00:00:00"
+        self._start_avg_speed = 0.0
+        self._intake_temp_sum = 0.0
+        self._intake_temp_count = 0
+        self._start_intake_temp_avg = 0.0
 
         # GPS data
         self._gps_lat = 0.0
@@ -215,6 +256,18 @@ class DashOSApp(QObject):
         self._map_download_progress = 0.0
         self._map_dir = ""
 
+        # WiFi state
+        self._wifi_list = "[]"
+        self._wifi_scanning = False
+        self._wifi_connected = True
+        self._wifi_connected_name = "MyHotspot"
+
+        # Bluetooth state
+        self._bt_list = "[]"
+        self._bt_scanning = False
+        self._bt_connected = True
+        self._bt_connected_name = "CarStereo-BT"
+
         # Services
         self._serial_bridge = None
         self._meshtastic = None
@@ -229,6 +282,12 @@ class DashOSApp(QObject):
 
     def _init_services(self):
         """Initialize real hardware services"""
+        # Clock timer
+        self._clock_timer = QTimer()
+        self._clock_timer.timeout.connect(self._update_clock)
+        self._clock_timer.start(1000)
+        self._update_clock()
+
         config_path = os.path.join(os.path.dirname(__file__), 'config', 'dashos.conf')
         config = self._load_config(config_path)
 
@@ -281,11 +340,17 @@ class DashOSApp(QObject):
         self._demo_counter = 0
         self._last_tick = time.time()
 
-        # Demo: 512GB SD card with UAE map ready
+        # Clock timer — update every second
+        self._clock_timer = QTimer()
+        self._clock_timer.timeout.connect(self._update_clock)
+        self._clock_timer.start(1000)
+        self._update_clock()  # immediate first update
+
+        # Demo: 512GB SD card, UAE map not downloaded yet (user wants to download)
         self._sd_total_gb = 512.0
         self._sd_free_gb = 498.2
         self._sd_mounted = True
-        self._uae_map_ready = True
+        self._uae_map_ready = False
 
         # Demo media playlist
         self._demo_playlist = [
@@ -295,6 +360,20 @@ class DashOSApp(QObject):
             ("Drive", "The Cars", "3:55", 235),
         ]
         self._demo_track_idx = 0
+
+    def _update_clock(self):
+        """Update current time/date with timezone offset"""
+        from datetime import datetime, timezone, timedelta
+        tz = timezone(timedelta(hours=self._tz_offset_hours))
+        now = datetime.now(tz)
+        new_time = now.strftime("%H:%M:%S")
+        new_date = now.strftime("%a %d %b %Y")
+        if new_time != self._current_time:
+            self._current_time = new_time
+            self.currentTimeChanged.emit()
+        if new_date != self._current_date:
+            self._current_date = new_date
+            self.currentDateChanged.emit()
 
     def _demo_tick(self):
         """Generate simulated data for demo mode"""
@@ -343,6 +422,11 @@ class DashOSApp(QObject):
         self.mafChanged.emit()
         self._intake_temp = int(30 + 5 * math.sin(t * 0.08))
         self.intakeTempChanged.emit()
+        # Accumulate intake temp average since start
+        self._intake_temp_sum += self._intake_temp
+        self._intake_temp_count += 1
+        self._start_intake_temp_avg = self._intake_temp_sum / self._intake_temp_count
+        self.startIntakeTempAvgChanged.emit()
         self._oil_temp = int(90 + 8 * math.sin(t * 0.06))
         self.oilTempChanged.emit()
         self._timing_advance = 14.0 + 4.0 * math.sin(t * 0.3)
@@ -381,12 +465,26 @@ class DashOSApp(QObject):
         self._trip_time = f"{h:02d}:{m:02d}:{s:02d}"
         self.tripTimeChanged.emit()
 
-        self._trip_distance += (self._speed / 3600.0) * dt
+        speed_km = self._speed / 3600.0 * dt
+        self._trip_distance += speed_km
         self.tripDistanceChanged.emit()
 
         if self._trip_time_secs > 0:
             self._trip_avg_speed = self._trip_distance / (self._trip_time_secs / 3600.0)
         self.tripAvgSpeedChanged.emit()
+
+        # ── Since-Start stats (never reset) ──
+        self._start_distance += speed_km
+        self._start_time_secs = int(t)
+        sh = self._start_time_secs // 3600
+        sm = (self._start_time_secs // 60) % 60
+        ss = self._start_time_secs % 60
+        self._start_time = f"{sh:02d}:{sm:02d}:{ss:02d}"
+        if self._start_time_secs > 0:
+            self._start_avg_speed = self._start_distance / (self._start_time_secs / 3600.0)
+        self.startDistanceChanged.emit()
+        self.startTimeChanged.emit()
+        self.startAvgSpeedChanged.emit()
 
         if self._speed > 5:
             self._fuel_economy = (self._fuel_rate / self._speed) * 100.0
@@ -710,11 +808,43 @@ class DashOSApp(QObject):
     @Property(bool, notify=chargerEnabledChanged)
     def chargerEnabled(self): return self._charger_enabled
 
+    @Property(str, notify=chargerModeChanged)
+    def chargerMode(self): return self._charger_mode
+
+    @Property(float, notify=chargerLimitChanged)
+    def chargerLimit(self): return self._charger_limit
+
     @Property(str, notify=faultTextChanged)
     def faultText(self): return self._fault_text
 
     @Property(str, notify=uptimeChanged)
     def uptime(self): return self._uptime
+
+    # Clock / timezone
+    @Property(str, notify=currentTimeChanged)
+    def currentTime(self): return self._current_time
+
+    @Property(str, notify=currentDateChanged)
+    def currentDate(self): return self._current_date
+
+    @Property(float, notify=timezoneOffsetChanged)
+    def timezoneOffset(self): return self._tz_offset_hours
+
+    @Property(str, notify=timezoneNameChanged)
+    def timezoneName(self): return self._tz_name
+
+    # Since-start stats
+    @Property(float, notify=startDistanceChanged)
+    def startDistance(self): return self._start_distance
+
+    @Property(str, notify=startTimeChanged)
+    def startTime(self): return self._start_time
+
+    @Property(float, notify=startAvgSpeedChanged)
+    def startAvgSpeed(self): return self._start_avg_speed
+
+    @Property(float, notify=startIntakeTempAvgChanged)
+    def startIntakeTempAvg(self): return self._start_intake_temp_avg
 
     # GPS
     @Property(float, notify=gpsLatChanged)
@@ -849,6 +979,31 @@ class DashOSApp(QObject):
     @Property(float, notify=mapDownloadProgressChanged)
     def mapDownloadProgress(self): return self._map_download_progress
 
+    # WiFi / Bluetooth
+    @Property(str, notify=wifiListChanged)
+    def wifiList(self): return self._wifi_list
+
+    @Property(bool, notify=wifiScanningChanged)
+    def wifiScanning(self): return self._wifi_scanning
+
+    @Property(bool, notify=wifiConnectedChanged)
+    def wifiConnected(self): return self._wifi_connected
+
+    @Property(str, notify=wifiConnectedNameChanged)
+    def wifiConnectedName(self): return self._wifi_connected_name
+
+    @Property(str, notify=btListChanged)
+    def btList(self): return self._bt_list
+
+    @Property(bool, notify=btScanningChanged)
+    def btScanning(self): return self._bt_scanning
+
+    @Property(bool, notify=btConnectedChanged)
+    def btConnected(self): return self._bt_connected
+
+    @Property(str, notify=btConnectedNameChanged)
+    def btConnectedName(self): return self._bt_connected_name
+
     # ── QML Slots (callable from UI) ────────────────────────
 
     @Slot()
@@ -870,9 +1025,60 @@ class DashOSApp(QObject):
     def toggleCharger(self):
         """Toggle DC charger on/off"""
         self._charger_enabled = not self._charger_enabled
+        self._charger_mode = "on" if self._charger_enabled else "off"
         self.chargerEnabledChanged.emit()
+        self.chargerModeChanged.emit()
         if self._serial_bridge:
             self._serial_bridge.send_command('enable_charger', val=1 if self._charger_enabled else 0)
+
+    @Slot(str)
+    def setChargerMode(self, mode):
+        """Set charger mode: 'off', 'limit', or 'on'"""
+        self._charger_mode = mode
+        self._charger_enabled = mode != "off"
+        self.chargerModeChanged.emit()
+        self.chargerEnabledChanged.emit()
+        if self._serial_bridge:
+            if mode == "off":
+                self._serial_bridge.send_command('enable_charger', val=0)
+            elif mode == "limit":
+                self._serial_bridge.send_command('enable_charger', val=1)
+                self._serial_bridge.send_command('set_current', val=self._charger_limit)
+            else:  # "on"
+                self._serial_bridge.send_command('enable_charger', val=1)
+        # Update fault text for demo
+        if self._demo_mode:
+            if mode == "off":
+                self._fault_text = "DC CHARGE OFF"
+            elif mode == "limit":
+                self._fault_text = f"CHARGE LIMITED\n{self._charger_limit:.0f}A — Current limited"
+            else:
+                self._fault_text = "CHARGING FULL RATE\n30A — All systems normal"
+            self.faultTextChanged.emit()
+
+    @Slot(float)
+    def setChargerLimit(self, amps):
+        """Set the charger current limit for LIMIT mode"""
+        self._charger_limit = max(1.0, min(30.0, amps))
+        self.chargerLimitChanged.emit()
+        if self._charger_mode == "limit" and self._serial_bridge:
+            self._serial_bridge.send_command('set_current', val=self._charger_limit)
+
+    @Slot(float)
+    def setTimezone(self, offset):
+        """Set timezone offset in hours (e.g., 4.0 for Abu Dhabi)"""
+        self._tz_offset_hours = offset
+        self.timezoneOffsetChanged.emit()
+        # Update name based on common offsets
+        tz_names = {
+            -5.0: "New York", -6.0: "Chicago", -8.0: "Los Angeles",
+            0.0: "London", 1.0: "Paris", 2.0: "Cairo", 3.0: "Riyadh",
+            3.5: "Tehran", 4.0: "Abu Dhabi", 4.5: "Kabul", 5.0: "Karachi",
+            5.5: "Mumbai", 8.0: "Singapore", 9.0: "Tokyo", 12.0: "Auckland"
+        }
+        self._tz_name = tz_names.get(offset, f"GMT{'+' if offset >= 0 else ''}{offset:.0f}")
+        self.timezoneNameChanged.emit()
+        self._update_clock()
 
     @Slot()
     def resetTrip(self):
@@ -905,6 +1111,150 @@ class DashOSApp(QObject):
         """Send a preset Meshtastic message"""
         if self._meshtastic:
             self._meshtastic.send_message(text)
+
+    @Slot()
+    def scanWifi(self):
+        """Scan for available WiFi networks"""
+        import threading
+        self._wifi_scanning = True
+        self.wifiScanningChanged.emit()
+
+        def _scan():
+            networks = []
+            if self._demo_mode:
+                # Demo WiFi networks
+                import time as _t
+                _t.sleep(1.5)
+                networks = [
+                    {"ssid": "MyHotspot", "signal": -45, "secured": True, "connected": True},
+                    {"ssid": "Etisalat-5G-Home", "signal": -62, "secured": True, "connected": False},
+                    {"ssid": "du-WiFi-Public", "signal": -71, "secured": False, "connected": False},
+                    {"ssid": "Starbucks_Free", "signal": -78, "secured": False, "connected": False},
+                    {"ssid": "Neighbor-AP", "signal": -85, "secured": True, "connected": False},
+                ]
+            else:
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ['nmcli', '-t', '-f', 'SSID,SIGNAL,SECURITY,ACTIVE', 'dev', 'wifi', 'list'],
+                        capture_output=True, text=True, timeout=15
+                    )
+                    for line in result.stdout.strip().split('\n'):
+                        if not line:
+                            continue
+                        parts = line.split(':')
+                        if len(parts) >= 4 and parts[0]:
+                            networks.append({
+                                "ssid": parts[0],
+                                "signal": -100 + int(parts[1]) if parts[1] else -100,
+                                "secured": parts[2] != "" and parts[2] != "--",
+                                "connected": parts[3] == "yes"
+                            })
+                except Exception as e:
+                    print(f"[WiFi] Scan failed: {e}")
+
+            self._wifi_list = json.dumps(networks)
+            self.wifiListChanged.emit()
+            self._wifi_scanning = False
+            self.wifiScanningChanged.emit()
+
+        threading.Thread(target=_scan, daemon=True).start()
+
+    @Slot(str)
+    def connectWifi(self, ssid):
+        """Connect to a WiFi network"""
+        import threading
+        def _connect():
+            if self._demo_mode:
+                import time as _t
+                _t.sleep(1)
+                self._wifi_connected_name = ssid
+                self._wifi_connected = True
+                self.wifiConnectedNameChanged.emit()
+                self.wifiConnectedChanged.emit()
+            else:
+                try:
+                    import subprocess
+                    subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid], timeout=30)
+                    self._wifi_connected_name = ssid
+                    self._wifi_connected = True
+                    self.wifiConnectedNameChanged.emit()
+                    self.wifiConnectedChanged.emit()
+                except Exception as e:
+                    print(f"[WiFi] Connect failed: {e}")
+        threading.Thread(target=_connect, daemon=True).start()
+
+    @Slot()
+    def scanBluetooth(self):
+        """Scan for Bluetooth devices"""
+        import threading
+        self._bt_scanning = True
+        self.btScanningChanged.emit()
+
+        def _scan():
+            devices = []
+            if self._demo_mode:
+                import time as _t
+                _t.sleep(2)
+                devices = [
+                    {"name": "CarStereo-BT", "addr": "AA:BB:CC:11:22:33", "type": "audio", "connected": True},
+                    {"name": "JBL Flip 6", "addr": "DD:EE:FF:44:55:66", "type": "audio", "connected": False},
+                    {"name": "OBD2-ELM327", "addr": "11:22:33:AA:BB:CC", "type": "obd", "connected": False},
+                    {"name": "iPhone 15 Pro", "addr": "44:55:66:DD:EE:FF", "type": "phone", "connected": False},
+                    {"name": "Galaxy Watch 5", "addr": "77:88:99:00:11:22", "type": "other", "connected": False},
+                ]
+            else:
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ['bluetoothctl', 'devices'],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    for line in result.stdout.strip().split('\n'):
+                        parts = line.split(' ', 2)
+                        if len(parts) >= 3:
+                            devices.append({
+                                "name": parts[2],
+                                "addr": parts[1],
+                                "type": "unknown",
+                                "connected": False
+                            })
+                except Exception as e:
+                    print(f"[BT] Scan failed: {e}")
+
+            self._bt_list = json.dumps(devices)
+            self.btListChanged.emit()
+            self._bt_scanning = False
+            self.btScanningChanged.emit()
+
+        threading.Thread(target=_scan, daemon=True).start()
+
+    @Slot(str)
+    def connectBluetooth(self, addr):
+        """Connect to a Bluetooth device"""
+        import threading
+        def _connect():
+            if self._demo_mode:
+                import time as _t
+                _t.sleep(1)
+                # Find name from list
+                devs = json.loads(self._bt_list)
+                for d in devs:
+                    if d["addr"] == addr:
+                        self._bt_connected_name = d["name"]
+                        break
+                self._bt_connected = True
+                self.btConnectedNameChanged.emit()
+                self.btConnectedChanged.emit()
+            else:
+                try:
+                    import subprocess
+                    subprocess.run(['bluetoothctl', 'connect', addr], timeout=30)
+                    self._bt_connected = True
+                    self.btConnectedChanged.emit()
+                except Exception as e:
+                    print(f"[BT] Connect failed: {e}")
+        threading.Thread(target=_connect, daemon=True).start()
 
     # ── Update callbacks ──
 
