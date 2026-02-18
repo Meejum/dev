@@ -7,3 +7,10 @@ __pycache__
 *.pyc
 .DS_Store
 Thumbs.db
+
+# Simulator
+simulator/build/
+simulator/lvgl/
+simulator/lv_drivers/
+simulator/*.bmp
+simulator/*.png
