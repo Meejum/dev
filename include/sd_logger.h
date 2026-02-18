@@ -95,8 +95,10 @@ static bool sd_open_log(const char *date_str) {
     // Write CSV header if new file
     if (is_new) {
         log_file.println("timestamp_ms,speed,rpm,ect,throttle,load,"
-                         "batt_v,batt_i,temp_t1,temp_t2,temp_amb,"
-                         "charge_rate,fault,alarm");
+                         "batt_v,batt_i,set_a,temp_t1,temp_t2,temp_amb,"
+                         "charge_rate,charger_en,fault,alarm,status,"
+                         "fuel_rate,fuel_level,maf,iat,oil_temp,"
+                         "timing_adv,o2_voltage,fuel_pres");
     }
 
     return true;
@@ -112,13 +114,20 @@ static void sd_log_data(unsigned long timestamp_ms, VehicleData *d) {
     if (timestamp_ms - last_log_time < log_interval_ms) return;
     last_log_time = timestamp_ms;
 
-    char buf[256];
+    char buf[384];
     snprintf(buf, sizeof(buf),
-             "%lu,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%.1f,%u,%u",
+             "%lu,%d,%d,%d,%d,%d,"
+             "%.2f,%.2f,%.1f,%d,%d,%d,"
+             "%.1f,%d,%u,%u,%u,"
+             "%.2f,%.1f,%.2f,%d,%d,"
+             "%.1f,%.3f,%d",
              timestamp_ms,
              d->speed, d->rpm, d->ect, d->throttle, d->load,
-             d->battV, d->battI, d->tempT1, d->tempT2, d->tempAmb,
-             d->targetCurrent, d->fault, d->alarm);
+             d->battV, d->battI, d->setA, d->tempT1, d->tempT2, d->tempAmb,
+             d->targetCurrent, d->chargerEnabled ? 1 : 0,
+             d->fault, d->alarm, d->status,
+             d->fuelRate, d->fuelLevel, d->maf, d->intakeAirTemp, d->oilTemp,
+             d->timingAdv, d->o2Voltage, d->fuelPressure);
 
     log_file.println(buf);
 

@@ -132,10 +132,20 @@ Item {
                             Layout.fillWidth: true
                             Text { text: "SD Card Logging"; color: "#94a3b8"; font.pixelSize: 13 }
                             Item { Layout.fillWidth: true }
-                            Switch {
-                                checked: true
-                                indicator: Rectangle { width: 44; height: 22; radius: 11; color: parent.checked ? "#22c55e" : "#475569"
-                                    Rectangle { x: parent.parent.checked ? parent.width - width - 3 : 3; y: 3; width: 16; height: 16; radius: 8; color: "#f1f5f9" } }
+                            // Logging toggle
+                            Rectangle {
+                                width: 44; height: 22; radius: 11
+                                color: (dash && dash.loggingEnabled) ? "#22c55e" : "#475569"
+                                Rectangle {
+                                    x: (dash && dash.loggingEnabled) ? parent.width - width - 3 : 3
+                                    y: 3; width: 16; height: 16; radius: 8; color: "#f1f5f9"
+                                    Behavior on x { NumberAnimation { duration: 150 } }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: dash.toggleLogging()
+                                }
                             }
                         }
 
@@ -158,7 +168,11 @@ Item {
                             }
                         }
 
-                        Text { text: "SD Free Space: 498.2 GB / 512.0 GB"; color: "#475569"; font.pixelSize: 11 }
+                        Text {
+                            text: "SD Free Space: " + (dash ? dash.sdFreeGb.toFixed(1) : "---") + " GB / " + (dash ? dash.sdTotalGb.toFixed(1) : "---") + " GB"
+                            color: (dash && dash.sdFreeGb < 10) ? "#ef4444" : "#475569"
+                            font.pixelSize: 11
+                        }
                     }
                 }
 

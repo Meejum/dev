@@ -38,6 +38,7 @@ from services.serial_bridge import SerialBridge
 from services.meshtastic_service import MeshtasticService
 from services.power_manager import PowerManager
 from services.update_service import UpdateService
+from services.data_logger import DataLogger
 
 
 class DashOSApp(QObject):
@@ -112,6 +113,17 @@ class DashOSApp(QObject):
     updateStatusChanged = Signal()
     updateInProgressChanged = Signal()
     updateLogChanged = Signal()
+
+    # ── SD / Data logging signals ──
+    sdTotalGbChanged = Signal()
+    sdFreeGbChanged = Signal()
+    sdMountedChanged = Signal()
+    loggingEnabledChanged = Signal()
+
+    # ── Offline map signals ──
+    uaeMapReadyChanged = Signal()
+    mapDownloadingChanged = Signal()
+    mapDownloadProgressChanged = Signal()
 
     def __init__(self, demo_mode=False):
         super().__init__()
@@ -191,11 +203,24 @@ class DashOSApp(QObject):
         self._update_in_progress = False
         self._update_log = ""
 
+        # SD card state
+        self._sd_total_gb = 512.0
+        self._sd_free_gb = 498.2
+        self._sd_mounted = True
+        self._logging_enabled = True
+
+        # Offline map state
+        self._uae_map_ready = False
+        self._map_downloading = False
+        self._map_download_progress = 0.0
+        self._map_dir = ""
+
         # Services
         self._serial_bridge = None
         self._meshtastic = None
         self._power_mgr = None
         self._update_service = None
+        self._data_logger = None
 
         if not demo_mode:
             self._init_services()
@@ -228,6 +253,21 @@ class DashOSApp(QObject):
         self._update_service.updateLog.connect(self._on_update_log)
         self._update_service.start()
 
+        # Data logger (Pi-side CSV logging to SD card)
+        sd_mount = config.get('sd_mount', '/media/sdcard')
+        self._data_logger = DataLogger(
+            log_dir=os.path.join(sd_mount, 'logs'),
+            interval_ms=int(config.get('log_interval', '1000'))
+        )
+        self._data_logger.set_dash(self)
+        self._data_logger.start()
+
+        # Check if UAE offline map already exists
+        self._map_dir = os.path.join(sd_mount, 'maps')
+        map_file = os.path.join(self._map_dir, "uae-latest.osm.pbf")
+        if os.path.exists(map_file) and os.path.getsize(map_file) > 1000000:
+            self._uae_map_ready = True
+
         # GPS polling timer (try gpsd every second)
         self._gps_timer = QTimer()
         self._gps_timer.timeout.connect(self._poll_gps)
@@ -240,6 +280,12 @@ class DashOSApp(QObject):
         self._demo_timer.start(500)
         self._demo_counter = 0
         self._last_tick = time.time()
+
+        # Demo: 512GB SD card with UAE map ready
+        self._sd_total_gb = 512.0
+        self._sd_free_gb = 498.2
+        self._sd_mounted = True
+        self._uae_map_ready = True
 
         # Demo media playlist
         self._demo_playlist = [
@@ -780,6 +826,29 @@ class DashOSApp(QObject):
     @Property(str, notify=updateLogChanged)
     def updateLog(self): return self._update_log
 
+    # SD card / data logging
+    @Property(float, notify=sdTotalGbChanged)
+    def sdTotalGb(self): return self._sd_total_gb
+
+    @Property(float, notify=sdFreeGbChanged)
+    def sdFreeGb(self): return self._sd_free_gb
+
+    @Property(bool, notify=sdMountedChanged)
+    def sdMounted(self): return self._sd_mounted
+
+    @Property(bool, notify=loggingEnabledChanged)
+    def loggingEnabled(self): return self._logging_enabled
+
+    # Offline maps
+    @Property(bool, notify=uaeMapReadyChanged)
+    def uaeMapReady(self): return self._uae_map_ready
+
+    @Property(bool, notify=mapDownloadingChanged)
+    def mapDownloading(self): return self._map_downloading
+
+    @Property(float, notify=mapDownloadProgressChanged)
+    def mapDownloadProgress(self): return self._map_download_progress
+
     # ── QML Slots (callable from UI) ────────────────────────
 
     @Slot()
@@ -854,6 +923,67 @@ class DashOSApp(QObject):
     def _on_update_log(self, log_line):
         self._update_log = log_line
         self.updateLogChanged.emit()
+
+    @Slot()
+    def downloadUaeMap(self):
+        """Download UAE offline map (OSM PBF) to SD card"""
+        import threading
+
+        if self._map_downloading:
+            return
+
+        self._map_downloading = True
+        self.mapDownloadingChanged.emit()
+
+        def _download():
+            import urllib.request
+            # UAE extract from Geofabrik (~380MB)
+            url = "https://download.geofabrik.de/asia/gcc-states-latest.osm.pbf"
+            map_dir = self._map_dir or os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), '..', 'maps')
+            os.makedirs(map_dir, exist_ok=True)
+            dest = os.path.join(map_dir, "uae-latest.osm.pbf")
+
+            try:
+                req = urllib.request.Request(url)
+                resp = urllib.request.urlopen(req, timeout=30)
+                total = int(resp.headers.get('Content-Length', 0))
+                downloaded = 0
+                block_size = 65536
+
+                with open(dest, 'wb') as f:
+                    while True:
+                        chunk = resp.read(block_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            self._map_download_progress = downloaded / total
+                            self.mapDownloadProgressChanged.emit()
+
+                self._uae_map_ready = True
+                self.uaeMapReadyChanged.emit()
+            except Exception as e:
+                print(f"[MAP] Download failed: {e}")
+            finally:
+                self._map_downloading = False
+                self.mapDownloadingChanged.emit()
+
+        threading.Thread(target=_download, daemon=True).start()
+
+    @Slot()
+    def launchNavigation(self):
+        """Launch offline navigation (placeholder for OSM renderer)"""
+        pass
+
+    @Slot()
+    def toggleLogging(self):
+        """Toggle SD card data logging on/off"""
+        self._logging_enabled = not self._logging_enabled
+        self.loggingEnabledChanged.emit()
+        if self._data_logger:
+            self._data_logger.set_enabled(self._logging_enabled)
 
     @Slot()
     def checkForUpdates(self):
