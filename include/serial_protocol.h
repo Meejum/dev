@@ -11,6 +11,7 @@
  *   {"cmd":"scan_dtc"}
  *   {"cmd":"clear_dtc"}
  *   {"cmd":"set_current","val":30.0}
+ *   {"cmd":"enable_charger","val":1}      // 1=on, 0=off
  *   {"cmd":"set_log_interval","val":1000}
  *   {"cmd":"get_supported_pids"}
  *   {"cmd":"shutdown"}
@@ -32,6 +33,7 @@ enum BridgeCommand {
     CMD_SCAN_DTC,
     CMD_CLEAR_DTC,
     CMD_SET_CURRENT,
+    CMD_CHARGER_ENABLE,
     CMD_SET_LOG_INTERVAL,
     CMD_GET_SUPPORTED_PIDS,
     CMD_SHUTDOWN,
@@ -64,7 +66,8 @@ static int serializeData(char *buf, int bufSize, VehicleData *d,
         "\"chg\":{"
             "\"v\":%.2f,\"a\":%.2f,\"set\":%.1f,"
             "\"t1\":%d,\"t2\":%d,\"amb\":%d,"
-            "\"rate\":%.1f,\"fault\":%u,\"alarm\":%u,\"status\":%u"
+            "\"rate\":%.1f,\"fault\":%u,\"alarm\":%u,\"status\":%u,"
+            "\"en\":%s"
         "}",
         d->speed, d->rpm, d->ect,
         d->throttle, d->load,
@@ -73,7 +76,8 @@ static int serializeData(char *buf, int bufSize, VehicleData *d,
         d->timingAdv, d->o2Voltage, d->fuelPressure,
         d->battV, d->battI, d->setA,
         d->tempT1, d->tempT2, d->tempAmb,
-        d->targetCurrent, d->fault, d->alarm, d->status);
+        d->targetCurrent, d->fault, d->alarm, d->status,
+        d->chargerEnabled ? "true" : "false");
 
     // Add DTCs if any
     if (dtcCount > 0) {
@@ -132,6 +136,13 @@ static ParsedCommand parseCommand(const char *json) {
         if (valStr) {
             valStr += 6;
             cmd.floatVal = atof(valStr);
+        }
+    } else if (strncmp(cmdStr, "enable_charger", 14) == 0) {
+        cmd.type = CMD_CHARGER_ENABLE;
+        const char *valStr = strstr(json, "\"val\":");
+        if (valStr) {
+            valStr += 6;
+            cmd.intVal = atoi(valStr);
         }
     } else if (strncmp(cmdStr, "set_log_interval", 16) == 0) {
         cmd.type = CMD_SET_LOG_INTERVAL;

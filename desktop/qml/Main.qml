@@ -6,12 +6,14 @@ import "components"
 ApplicationWindow {
     id: root
     visible: true
-    width: 1024
-    height: 600
-    title: "DashOS"
+    width: 1280
+    height: 720
+    minimumWidth: 800
+    minimumHeight: 480
+    title: "DashOS Desktop — Vehicle Dashboard"
     color: "#0a0e17"
 
-    // Dark theme colors (matching ESP32 LVGL theme)
+    // Dark theme colors
     readonly property color cBg: "#0a0e17"
     readonly property color cCard: "#111827"
     readonly property color cSurface: "#1e293b"
@@ -82,13 +84,11 @@ ApplicationWindow {
                         border.color: stackView.currentIndex === modelData.page ? cBorder : "transparent"
                         border.width: 1
 
-                        // Driving mode: dim Settings button
                         opacity: (isDriving && modelData.page === 5) ? 0.3 : 1.0
 
                         MouseArea {
                             anchors.fill: parent
                             onClicked: {
-                                // Driving mode lockdown: block Settings at speed
                                 if (isDriving && modelData.page === 5) return
                                 stackView.currentIndex = modelData.page
                             }
@@ -113,7 +113,7 @@ ApplicationWindow {
                             }
                         }
 
-                        // Update notification badge on Settings icon
+                        // Update notification badge
                         Rectangle {
                             visible: modelData.page === 5 && (dash ? dash.updateAvailable : false)
                             width: 10; height: 10; radius: 5
@@ -155,6 +155,24 @@ ApplicationWindow {
                         anchors.fill: parent
                         onClicked: dash.toggleHUD()
                         cursorShape: Qt.PointingHandCursor
+                    }
+                }
+
+                // Serial connection indicator
+                Rectangle {
+                    Layout.preferredWidth: 58
+                    Layout.preferredHeight: 18
+                    Layout.alignment: Qt.AlignHCenter
+                    radius: 4
+                    color: (dash && dash.serialConnected) ? "#052e16" : "#450a0a"
+                    border.color: (dash && dash.serialConnected) ? "#166534" : "#991b1b"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: (dash && dash.serialConnected) ? "USB" : "N/C"
+                        font.pixelSize: 8
+                        font.bold: true
+                        color: (dash && dash.serialConnected) ? cGreen : cRed
                     }
                 }
 
@@ -218,7 +236,7 @@ ApplicationWindow {
                 Loader { source: "modules/Meshtastic.qml" }
                 // Page 3: DTC Diagnostics
                 Loader { source: "modules/DTCViewer.qml" }
-                // Page 4: Media (CarPlay/YouTube)
+                // Page 4: Media
                 Loader { source: "modules/MediaPlayer.qml" }
                 // Page 5: Settings
                 Loader { source: "modules/Settings.qml" }
@@ -257,7 +275,6 @@ ApplicationWindow {
                     anchors.centerIn: parent
                     spacing: 8
 
-                    // Speed — massive font
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: dash ? dash.speed : "0"
@@ -274,7 +291,6 @@ ApplicationWindow {
 
                     Item { width: 1; height: 20 }
 
-                    // RPM bar
                     Rectangle {
                         width: 500
                         height: 20
@@ -297,7 +313,6 @@ ApplicationWindow {
                     }
                 }
 
-                // Tap to exit hint
                 Text {
                     anchors.bottom: parent.bottom
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -307,7 +322,6 @@ ApplicationWindow {
                     color: "#475569"
                 }
 
-                // GPS + time in HUD
                 Row {
                     anchors.top: parent.top
                     anchors.right: parent.right
@@ -330,7 +344,6 @@ ApplicationWindow {
                     }
                 }
 
-                // Fuel level in HUD
                 Row {
                     anchors.top: parent.top
                     anchors.left: parent.left

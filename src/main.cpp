@@ -55,7 +55,7 @@ static bool dtc_clear_requested = false;
 
 // ─── IO Expander (needed in both modes for CAN mux) ──
 #include <ESP_IOExpander_Library.h>
-static ESP_IOExpander *io_expander = NULL;
+static esp_expander::Base *io_expander = NULL;
 
 /* ══════════════════════════════════════════════════════════════
  * GLOBAL VEHICLE + CHARGER DATA
@@ -68,6 +68,7 @@ struct VehicleData {
     int tempT1 = 0, tempT2 = 0, tempAmb = 0;
     uint16_t fault = 0, alarm = 0, status = 0;
     bool canOk = false, rs485Ok = false;
+    bool chargerEnabled = true;
     // Extended OBD fields
     float fuelRate = -1;       // L/h (PID 0x5E)
     float fuelLevel = -1;      // % (PID 0x2F)
@@ -253,6 +254,18 @@ void readAllCharger() {
 static float lastSetCurrent = -1;
 
 void updateChargingLogic() {
+    // If charger is disabled, set current to 0 and skip smart logic
+    if (!vdata.chargerEnabled) {
+        if (lastSetCurrent != 0.0f) {
+            if (setCurrent(0.0f)) {
+                lastSetCurrent = 0.0f;
+                vdata.setA = 0.0f;
+                vdata.targetCurrent = 0.0f;
+            }
+        }
+        return;
+    }
+
     bool safe = true;
     if (vdata.tempT1 > 80 || vdata.tempT2 > 80 || vdata.tempAmb > 80) safe = false;
     if (vdata.battV < 24.0f || vdata.battV > 29.6f) safe = false;
@@ -416,6 +429,19 @@ void processCommand(ParsedCommand &cmd) {
             } else {
                 Serial.println("{\"set_current\":\"failed\"}");
             }
+            break;
+
+        case CMD_CHARGER_ENABLE:
+            vdata.chargerEnabled = (cmd.intVal != 0);
+            if (!vdata.chargerEnabled) {
+                // Immediately set current to 0 when disabling
+                setCurrent(0.0f);
+                lastSetCurrent = 0.0f;
+                vdata.setA = 0.0f;
+                vdata.targetCurrent = 0.0f;
+            }
+            Serial.printf("{\"charger_enable\":\"%s\"}\n",
+                          vdata.chargerEnabled ? "on" : "off");
             break;
 
         case CMD_GET_SUPPORTED_PIDS:

@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-DashOS — Custom Vehicle Operating System
-Main entry point for the Raspberry Pi application
+DashOS Desktop — Windows Desktop Application
+Vehicle dashboard with USB serial connection to ESP32/LilyGo T-CAN485.
 
-Launches Qt/QML UI with modular vehicle dashboard, OBD2 scanner,
-Meshtastic messaging, CarPlay, YouTube, and settings.
+Connects via USB serial (COM port) to RS485 or LilyGo T-CAN485 ESP32
+for real-time OBD-II, charger monitoring, and vehicle diagnostics.
 
 Usage:
-    python main.py                  # Normal launch
+    python main.py                  # Normal launch (auto-detect COM port)
     python main.py --demo           # Demo mode with simulated data
-    python main.py --fullscreen     # Kiosk mode (no window decorations)
+    python main.py --port COM3      # Specify serial port
+    python main.py --fullscreen     # Fullscreen mode
+    python main.py --screenshot FILE          # Capture screenshot
+    python main.py --screenshot-all DIR       # Capture all pages
 """
 
 import sys
@@ -21,29 +24,27 @@ import math
 import time
 import threading
 
+# Desktop window size (resizable, but default to a comfortable size)
+DASHOS_WIDTH = 1280
+DASHOS_HEIGHT = 720
+
 # Must set offscreen screen size BEFORE Qt is imported
-# Device: Waveshare 7" Touch LCD — 1024x600 native resolution
-DASHOS_WIDTH = 1024
-DASHOS_HEIGHT = 600
 if os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
     os.environ['QT_QPA_OFFSCREEN_SCREEN_SIZE'] = f'{DASHOS_WIDTH}x{DASHOS_HEIGHT}'
 
 from PySide6.QtCore import QUrl, QTimer, Property, Signal, Slot, QObject
-from PySide6.QtGui import QGuiApplication, QFont
-from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
+from PySide6.QtGui import QGuiApplication, QFont, QIcon
+from PySide6.QtQml import QQmlApplicationEngine
 
 # Add parent directory for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services.serial_bridge import SerialBridge
-from services.meshtastic_service import MeshtasticService
-from services.power_manager import PowerManager
-from services.update_service import UpdateService
 from services.data_logger import DataLogger
 
 
-class DashOSApp(QObject):
-    """Main application controller exposed to QML"""
+class DashOSDesktop(QObject):
+    """Main application controller exposed to QML — Windows Desktop version"""
 
     # ── Vehicle data signals ──
     speedChanged = Signal()
@@ -150,7 +151,14 @@ class DashOSApp(QObject):
     btConnectedChanged = Signal()
     btConnectedNameChanged = Signal()
 
-    def __init__(self, demo_mode=False):
+    # ── Serial port signals (desktop-specific) ──
+    serialPortChanged = Signal()
+    serialBaudChanged = Signal()
+    serialConnectedChanged = Signal()
+    serialStatusChanged = Signal()
+    availablePortsChanged = Signal()
+
+    def __init__(self, demo_mode=False, serial_port=None, serial_baud=115200):
         super().__init__()
         self._demo_mode = demo_mode
 
@@ -171,16 +179,16 @@ class DashOSApp(QObject):
         self._fault_text = "Initializing..."
         self._uptime = "00:00:00"
         self._charger_enabled = True
-        self._charger_mode = "on"   # "off", "limit", "on"
-        self._charger_limit = 15.0  # Amps limit when in "limit" mode
+        self._charger_mode = "on"
+        self._charger_limit = 15.0
 
-        # Clock / timezone (Abu Dhabi = +4:00 GMT)
+        # Clock / timezone
         self._tz_offset_hours = 4.0
         self._tz_name = "Abu Dhabi"
         self._current_time = ""
         self._current_date = ""
 
-        # Since-start stats (never reset, only on app restart)
+        # Since-start stats
         self._start_distance = 0.0
         self._start_time_secs = 0
         self._start_time = "00:00:00"
@@ -208,14 +216,14 @@ class DashOSApp(QObject):
         self._dte = 0.0
         self._trip_start = time.time()
         self._last_tick = time.time()
-        self._tank_capacity = 55.0  # liters (configurable)
+        self._tank_capacity = 55.0
 
         # Alert system
         self._alert_text = ""
         self._alert_severity = ""
         self._alert_visible = False
         self._active_dtcs = []
-        self._alert_suppressed_until = 0  # timestamp for dismiss cooldown
+        self._alert_suppressed_until = 0
 
         # Advanced OBD
         self._maf = 0.0
@@ -245,35 +253,38 @@ class DashOSApp(QObject):
         self._update_in_progress = False
         self._update_log = ""
 
-        # SD card state
-        self._sd_total_gb = 512.0
-        self._sd_free_gb = 498.2
-        self._sd_mounted = True
+        # SD card / logging state
+        self._sd_total_gb = 0.0
+        self._sd_free_gb = 0.0
+        self._sd_mounted = False
         self._logging_enabled = True
 
         # Offline map state
         self._uae_map_ready = False
         self._map_downloading = False
         self._map_download_progress = 0.0
-        self._map_dir = ""
 
-        # WiFi state
+        # WiFi state (desktop: show host machine info)
         self._wifi_list = "[]"
         self._wifi_scanning = False
-        self._wifi_connected = True
-        self._wifi_connected_name = "MyHotspot"
+        self._wifi_connected = False
+        self._wifi_connected_name = ""
 
         # Bluetooth state
         self._bt_list = "[]"
         self._bt_scanning = False
-        self._bt_connected = True
-        self._bt_connected_name = "CarStereo-BT"
+        self._bt_connected = False
+        self._bt_connected_name = ""
+
+        # Serial port state (desktop-specific)
+        self._serial_port = serial_port or ""
+        self._serial_baud = serial_baud
+        self._serial_connected = False
+        self._serial_status = "Disconnected"
+        self._available_ports = "[]"
 
         # Services
         self._serial_bridge = None
-        self._meshtastic = None
-        self._power_mgr = None
-        self._update_service = None
         self._data_logger = None
 
         if not demo_mode:
@@ -282,56 +293,117 @@ class DashOSApp(QObject):
             self._init_demo()
 
     def _init_services(self):
-        """Initialize real hardware services"""
+        """Initialize real hardware services for desktop"""
         # Clock timer
         self._clock_timer = QTimer()
         self._clock_timer.timeout.connect(self._update_clock)
         self._clock_timer.start(1000)
         self._update_clock()
 
-        config_path = os.path.join(os.path.dirname(__file__), 'config', 'dashos.conf')
+        # Load config
+        config_path = os.path.join(os.path.dirname(__file__), 'config', 'desktop.conf')
         config = self._load_config(config_path)
 
-        self._serial_bridge = SerialBridge(
-            port=config.get('serial_port', '/dev/ttyUSB0'),
-            baud=int(config.get('serial_baud', '115200'))
-        )
-        self._serial_bridge.data_received.connect(self._on_vehicle_data)
-        self._serial_bridge.start()
+        # Serial port — use command-line arg, config, or auto-detect
+        port = self._serial_port or config.get('serial_port', '')
+        baud = int(config.get('serial_baud', str(self._serial_baud)))
 
-        self._meshtastic = MeshtasticService()
-        self._power_mgr = PowerManager()
+        # Auto-detect serial port on Windows
+        if not port:
+            port = self._auto_detect_port()
 
-        # Update service
-        self._update_service = UpdateService(
-            repo_url=config.get('ota_repo', ''),
-            branch=config.get('ota_branch', 'main')
-        )
-        self._update_service.updateAvailable.connect(self._on_update_available)
-        self._update_service.updateStatus.connect(self._on_update_status)
-        self._update_service.updateInProgress.connect(self._on_update_in_progress)
-        self._update_service.updateLog.connect(self._on_update_log)
-        self._update_service.start()
+        self._serial_port = port
+        self._serial_baud = baud
 
-        # Data logger (Pi-side CSV logging to SD card)
-        sd_mount = config.get('sd_mount', '/media/sdcard')
+        if port:
+            self._serial_bridge = SerialBridge(port=port, baud=baud)
+            self._serial_bridge.data_received.connect(self._on_vehicle_data)
+            self._serial_bridge.connected.connect(self._on_serial_connected)
+            self._serial_bridge.error.connect(self._on_serial_error)
+            self._serial_bridge.start()
+            self._serial_status = f"Connecting to {port}..."
+        else:
+            self._serial_status = "No serial port configured"
+        self.serialStatusChanged.emit()
+
+        # Scan available ports periodically
+        self._scan_ports()
+        self._port_scan_timer = QTimer()
+        self._port_scan_timer.timeout.connect(self._scan_ports)
+        self._port_scan_timer.start(5000)
+
+        # Data logger (to local filesystem)
+        log_dir = config.get('log_dir', os.path.join(os.path.expanduser('~'), 'DashOS', 'logs'))
         self._data_logger = DataLogger(
-            log_dir=os.path.join(sd_mount, 'logs'),
+            log_dir=log_dir,
             interval_ms=int(config.get('log_interval', '1000'))
         )
         self._data_logger.set_dash(self)
-        self._data_logger.start()
+        if self._logging_enabled:
+            self._data_logger.start()
 
-        # Check if UAE offline map already exists
-        self._map_dir = os.path.join(sd_mount, 'maps')
-        map_file = os.path.join(self._map_dir, "uae-latest.osm.pbf")
-        if os.path.exists(map_file) and os.path.getsize(map_file) > 1000000:
-            self._uae_map_ready = True
+        # Detect disk space for log directory
+        self._update_disk_info(log_dir)
 
-        # GPS polling timer (try gpsd every second)
-        self._gps_timer = QTimer()
-        self._gps_timer.timeout.connect(self._poll_gps)
-        self._gps_timer.start(1000)
+    def _auto_detect_port(self):
+        """Auto-detect ESP32/LilyGo T-CAN485 serial port"""
+        try:
+            import serial.tools.list_ports
+            ports = serial.tools.list_ports.comports()
+            for port in ports:
+                desc = (port.description or "").lower()
+                vid = port.vid or 0
+                pid = port.pid or 0
+                # ESP32-S3 USB: VID=303A (Espressif)
+                # CP2102/CH340/FTDI: common USB-serial bridges
+                # LilyGo T-CAN485: typically CP2102 or CH340
+                if vid == 0x303A:  # Espressif
+                    return port.device
+                if 'cp210' in desc or 'ch340' in desc or 'ftdi' in desc:
+                    return port.device
+                if 'esp32' in desc or 'lilygo' in desc or 'can485' in desc:
+                    return port.device
+            # Fallback: return first available port
+            if ports:
+                return ports[0].device
+        except Exception:
+            pass
+        return ""
+
+    def _scan_ports(self):
+        """Scan available serial ports"""
+        try:
+            import serial.tools.list_ports
+            ports = serial.tools.list_ports.comports()
+            port_list = []
+            for p in ports:
+                port_list.append({
+                    "device": p.device,
+                    "description": p.description or p.device,
+                    "vid": p.vid or 0,
+                    "pid": p.pid or 0
+                })
+            new_json = json.dumps(port_list)
+            if new_json != self._available_ports:
+                self._available_ports = new_json
+                self.availablePortsChanged.emit()
+        except Exception:
+            pass
+
+    def _update_disk_info(self, path):
+        """Update disk info for the log directory"""
+        try:
+            import shutil
+            os.makedirs(path, exist_ok=True)
+            usage = shutil.disk_usage(path)
+            self._sd_total_gb = usage.total / (1024 ** 3)
+            self._sd_free_gb = usage.free / (1024 ** 3)
+            self._sd_mounted = True
+            self.sdTotalGbChanged.emit()
+            self.sdFreeGbChanged.emit()
+            self.sdMountedChanged.emit()
+        except Exception:
+            pass
 
     def _init_demo(self):
         """Initialize demo mode with simulated data"""
@@ -341,17 +413,20 @@ class DashOSApp(QObject):
         self._demo_counter = 0
         self._last_tick = time.time()
 
-        # Clock timer — update every second
+        # Clock timer
         self._clock_timer = QTimer()
         self._clock_timer.timeout.connect(self._update_clock)
         self._clock_timer.start(1000)
-        self._update_clock()  # immediate first update
+        self._update_clock()
 
-        # Demo: 512GB SD card, UAE map not downloaded yet (user wants to download)
+        # Demo disk info
         self._sd_total_gb = 512.0
         self._sd_free_gb = 498.2
         self._sd_mounted = True
-        self._uae_map_ready = False
+
+        # Demo serial status
+        self._serial_status = "Demo Mode"
+        self._serial_connected = True
 
         # Demo media playlist
         self._demo_playlist = [
@@ -384,7 +459,7 @@ class DashOSApp(QObject):
         dt = now - self._last_tick
         self._last_tick = now
 
-        # ── Vehicle data ──
+        # Vehicle data
         self._speed = int(60 + 40 * math.sin(t * 0.3))
         self.speedChanged.emit()
         self._rpm = int(2000 + 1500 * math.sin(t * 0.5))
@@ -411,19 +486,18 @@ class DashOSApp(QObject):
         self.canOkChanged.emit()
         self._rs485_ok = True
         self.rs485OkChanged.emit()
-        self._fault_text = "CHARGING FULL RATE\n30A — All systems normal"
+        self._fault_text = "CHARGING FULL RATE\n30A \u2014 All systems normal"
         self.faultTextChanged.emit()
 
         secs = int(t)
         self._uptime = f"{secs // 3600:02d}:{(secs // 60) % 60:02d}:{secs % 60:02d}"
         self.uptimeChanged.emit()
 
-        # ── Advanced OBD (demo) ──
+        # Advanced OBD
         self._maf = 4.5 + 2.0 * math.sin(t * 0.4)
         self.mafChanged.emit()
         self._intake_temp = int(30 + 5 * math.sin(t * 0.08))
         self.intakeTempChanged.emit()
-        # Accumulate intake temp average since start
         self._intake_temp_sum += self._intake_temp
         self._intake_temp_count += 1
         self._start_intake_temp_avg = self._intake_temp_sum / self._intake_temp_count
@@ -441,7 +515,7 @@ class DashOSApp(QObject):
         self._fuel_level = max(0, 65.0 - t * 0.02)
         self.fuelLevelChanged.emit()
 
-        # ── GPS (demo: simulate driving in Dubai) ──
+        # GPS (demo: simulate driving)
         base_lat = 25.2048
         base_lon = 55.2708
         self._gps_lat = base_lat + 0.01 * math.sin(t * 0.05)
@@ -458,7 +532,7 @@ class DashOSApp(QObject):
         self.gpsSatellitesChanged.emit()
         self.gpsFixTextChanged.emit()
 
-        # ── Trip Computer ──
+        # Trip Computer
         self._trip_time_secs = int(t)
         h = self._trip_time_secs // 3600
         m = (self._trip_time_secs // 60) % 60
@@ -474,7 +548,7 @@ class DashOSApp(QObject):
             self._trip_avg_speed = self._trip_distance / (self._trip_time_secs / 3600.0)
         self.tripAvgSpeedChanged.emit()
 
-        # ── Since-Start stats (never reset) ──
+        # Since-Start stats
         self._start_distance += speed_km
         self._start_time_secs = int(t)
         sh = self._start_time_secs // 3600
@@ -496,11 +570,11 @@ class DashOSApp(QObject):
             self._dte = remaining_fuel / (self._fuel_economy / 100.0)
         self.dteChanged.emit()
 
-        # ── Alert System ──
-        self._active_dtcs = []  # No active DTCs in demo by default
+        # Alert System
+        self._active_dtcs = []
         self._check_alerts()
 
-        # ── Media (demo playlist) ──
+        # Media
         track = self._demo_playlist[self._demo_track_idx]
         title, artist, dur_str, dur_secs = track
         if self._track_title != title:
@@ -520,13 +594,13 @@ class DashOSApp(QObject):
         if int(t) % dur_secs == dur_secs - 1 and self._demo_counter % 2 == 0:
             self._demo_track_idx = (self._demo_track_idx + 1) % len(self._demo_playlist)
 
-        # ── Driving mode ──
+        # Driving mode
         was_driving = self._driving_mode
         self._driving_mode = self._speed > 10
         if was_driving != self._driving_mode:
             self.drivingModeChanged.emit()
 
-        # ── Meshtastic nodes (demo, update every 5 seconds) ──
+        # Meshtastic nodes (demo)
         if self._demo_counter % 10 == 1:
             nodes = [
                 {"id": "NodeA-alpha", "short": "Alpha", "snr": 8.5, "rssi": -75,
@@ -538,7 +612,7 @@ class DashOSApp(QObject):
                 {"id": "NodeC-charlie", "short": "Charlie", "snr": 3.1, "rssi": -102,
                  "battery": 34, "lastHeard": "5m ago",
                  "lat": base_lat + 0.008, "lon": base_lon - 0.004},
-                {"id": "Heltec-V3 (You)", "short": "You", "snr": 0, "rssi": 0,
+                {"id": "LilyGo-CAN485 (You)", "short": "You", "snr": 0, "rssi": 0,
                  "battery": 85, "lastHeard": "now",
                  "lat": self._gps_lat, "lon": self._gps_lon},
             ]
@@ -552,33 +626,27 @@ class DashOSApp(QObject):
 
         alerts = []
 
-        # Overheat
         if self._coolant > 110:
-            alerts.append(("OVERHEAT: Coolant " + str(self._coolant) + "\u00b0C — Pull over immediately", "critical"))
+            alerts.append(("OVERHEAT: Coolant " + str(self._coolant) + "\u00b0C \u2014 Pull over immediately", "critical"))
         elif self._coolant > 100:
-            alerts.append(("HIGH COOLANT: " + str(self._coolant) + "\u00b0C — Monitor closely", "warning"))
+            alerts.append(("HIGH COOLANT: " + str(self._coolant) + "\u00b0C \u2014 Monitor closely", "warning"))
 
-        # Low fuel
         if self._fuel_level < 10:
-            alerts.append((f"CRITICAL FUEL: {self._fuel_level:.0f}% remaining — Find station now", "critical"))
+            alerts.append((f"CRITICAL FUEL: {self._fuel_level:.0f}% remaining \u2014 Find station now", "critical"))
         elif self._fuel_level < 20:
-            alerts.append((f"LOW FUEL: {self._fuel_level:.0f}% — Plan refueling", "warning"))
+            alerts.append((f"LOW FUEL: {self._fuel_level:.0f}% \u2014 Plan refueling", "warning"))
 
-        # Low battery voltage
         if 0 < self._batt_v < 11.5:
-            alerts.append((f"LOW VOLTAGE: {self._batt_v:.1f}V — Check alternator", "critical"))
+            alerts.append((f"LOW VOLTAGE: {self._batt_v:.1f}V \u2014 Check alternator", "critical"))
 
-        # Oil temp
         if self._oil_temp > 130:
             alerts.append(("HIGH OIL TEMP: " + str(self._oil_temp) + "\u00b0C", "critical"))
 
-        # Active DTCs — misfire codes
         for dtc in self._active_dtcs:
             if dtc.startswith("P03"):
-                alerts.append(("MISFIRE DETECTED: " + dtc + " — Reduce load", "critical"))
+                alerts.append(("MISFIRE DETECTED: " + dtc + " \u2014 Reduce load", "critical"))
                 break
 
-        # Overspeed
         if self._speed > 160:
             alerts.append(("OVERSPEED: " + str(self._speed) + " km/h", "warning"))
 
@@ -605,39 +673,11 @@ class DashOSApp(QObject):
                 self.alertTextChanged.emit()
                 self.alertSeverityChanged.emit()
 
-    def _poll_gps(self):
-        """Poll gpsd for GPS data (real mode only)"""
-        try:
-            from gpsdclient import GPSDClient
-            with GPSDClient() as client:
-                for result in client.dict_stream(convert_datetime=False):
-                    if result["class"] == "TPV":
-                        self._gps_lat = result.get("lat", 0.0)
-                        self._gps_lon = result.get("lon", 0.0)
-                        self._gps_heading = result.get("track", 0.0)
-                        self._gps_alt = result.get("alt", 0.0)
-                        mode = result.get("mode", 0)
-                        self._gps_fix_text = {0: "No Fix", 1: "No Fix", 2: "2D Fix", 3: "3D Fix"}.get(mode, "Unknown")
-                        self.gpsLatChanged.emit()
-                        self.gpsLonChanged.emit()
-                        self.gpsHeadingChanged.emit()
-                        self.gpsAltChanged.emit()
-                        self.gpsFixTextChanged.emit()
-                        break
-                    elif result["class"] == "SKY":
-                        sats = result.get("satellites", [])
-                        self._gps_satellites = sum(1 for s in sats if s.get("used", False))
-                        self.gpsSatellitesChanged.emit()
-                        break
-        except Exception:
-            pass  # GPS not available
-
     def _on_vehicle_data(self, data):
         """Handle incoming vehicle data from ESP32"""
         obd = data.get('obd', {})
         chg = data.get('chg', {})
 
-        # Core OBD fields
         if 'spd' in obd:
             self._speed = obd['spd']
             self.speedChanged.emit()
@@ -654,7 +694,6 @@ class DashOSApp(QObject):
             self._load = obd['load']
             self.loadChanged.emit()
 
-        # Charger fields
         if 'v' in chg:
             self._batt_v = chg['v']
             self.battVChanged.emit()
@@ -710,11 +749,10 @@ class DashOSApp(QObject):
             self._fuel_pressure = obd['fuel_pres']
             self.fuelPressureChanged.emit()
 
-        # DTCs
         if 'dtc' in data:
             self._active_dtcs = data['dtc']
 
-        # Trip computer update (real mode)
+        # Trip computer update
         now = time.time()
         dt = now - self._last_tick
         self._last_tick = now
@@ -743,14 +781,24 @@ class DashOSApp(QObject):
             self._dte = remaining / (self._fuel_economy / 100.0)
             self.dteChanged.emit()
 
-        # Alert check
         self._check_alerts()
 
-        # Driving mode
         was_driving = self._driving_mode
         self._driving_mode = self._speed > 10
         if was_driving != self._driving_mode:
             self.drivingModeChanged.emit()
+
+    def _on_serial_connected(self, connected):
+        """Handle serial connection status change"""
+        self._serial_connected = connected
+        self._serial_status = f"Connected to {self._serial_port}" if connected else "Disconnected"
+        self.serialConnectedChanged.emit()
+        self.serialStatusChanged.emit()
+
+    def _on_serial_error(self, error_msg):
+        """Handle serial error"""
+        self._serial_status = error_msg
+        self.serialStatusChanged.emit()
 
     @staticmethod
     def _load_config(path):
@@ -821,7 +869,6 @@ class DashOSApp(QObject):
     @Property(str, notify=uptimeChanged)
     def uptime(self): return self._uptime
 
-    # Clock / timezone
     @Property(str, notify=currentTimeChanged)
     def currentTime(self): return self._current_time
 
@@ -834,7 +881,6 @@ class DashOSApp(QObject):
     @Property(str, notify=timezoneNameChanged)
     def timezoneName(self): return self._tz_name
 
-    # Since-start stats
     @Property(float, notify=startDistanceChanged)
     def startDistance(self): return self._start_distance
 
@@ -847,7 +893,6 @@ class DashOSApp(QObject):
     @Property(float, notify=startIntakeTempAvgChanged)
     def startIntakeTempAvg(self): return self._start_intake_temp_avg
 
-    # GPS
     @Property(float, notify=gpsLatChanged)
     def gpsLat(self): return self._gps_lat
 
@@ -866,7 +911,6 @@ class DashOSApp(QObject):
     @Property(str, notify=gpsFixTextChanged)
     def gpsFixText(self): return self._gps_fix_text
 
-    # Trip computer
     @Property(float, notify=tripDistanceChanged)
     def tripDistance(self): return self._trip_distance
 
@@ -888,7 +932,6 @@ class DashOSApp(QObject):
     @Property(float, notify=dteChanged)
     def dte(self): return self._dte
 
-    # Alerts
     @Property(str, notify=alertTextChanged)
     def alertText(self): return self._alert_text
 
@@ -898,7 +941,6 @@ class DashOSApp(QObject):
     @Property(bool, notify=alertVisibleChanged)
     def alertVisible(self): return self._alert_visible
 
-    # Advanced OBD
     @Property(float, notify=mafChanged)
     def maf(self): return self._maf
 
@@ -917,7 +959,6 @@ class DashOSApp(QObject):
     @Property(int, notify=fuelPressureChanged)
     def fuelPressure(self): return self._fuel_pressure
 
-    # Media
     @Property(str, notify=trackTitleChanged)
     def trackTitle(self): return self._track_title
 
@@ -933,18 +974,15 @@ class DashOSApp(QObject):
     @Property(bool, notify=isPlayingChanged)
     def isPlaying(self): return self._is_playing
 
-    # Modes
     @Property(bool, notify=hudModeChanged)
     def hudMode(self): return self._hud_mode
 
     @Property(bool, notify=drivingModeChanged)
     def drivingMode(self): return self._driving_mode
 
-    # Meshtastic nodes
     @Property(str, notify=nodeListJsonChanged)
     def nodeListJson(self): return self._node_list_json
 
-    # Update
     @Property(bool, notify=updateAvailableChanged)
     def updateAvailable(self): return self._update_available
 
@@ -957,7 +995,6 @@ class DashOSApp(QObject):
     @Property(str, notify=updateLogChanged)
     def updateLog(self): return self._update_log
 
-    # SD card / data logging
     @Property(float, notify=sdTotalGbChanged)
     def sdTotalGb(self): return self._sd_total_gb
 
@@ -970,7 +1007,6 @@ class DashOSApp(QObject):
     @Property(bool, notify=loggingEnabledChanged)
     def loggingEnabled(self): return self._logging_enabled
 
-    # Offline maps
     @Property(bool, notify=uaeMapReadyChanged)
     def uaeMapReady(self): return self._uae_map_ready
 
@@ -980,7 +1016,6 @@ class DashOSApp(QObject):
     @Property(float, notify=mapDownloadProgressChanged)
     def mapDownloadProgress(self): return self._map_download_progress
 
-    # WiFi / Bluetooth
     @Property(str, notify=wifiListChanged)
     def wifiList(self): return self._wifi_list
 
@@ -1005,7 +1040,23 @@ class DashOSApp(QObject):
     @Property(str, notify=btConnectedNameChanged)
     def btConnectedName(self): return self._bt_connected_name
 
-    # ── QML Slots (callable from UI) ────────────────────────
+    # ── Desktop-specific properties ──
+    @Property(str, notify=serialPortChanged)
+    def serialPort(self): return self._serial_port
+
+    @Property(int, notify=serialBaudChanged)
+    def serialBaud(self): return self._serial_baud
+
+    @Property(bool, notify=serialConnectedChanged)
+    def serialConnected(self): return self._serial_connected
+
+    @Property(str, notify=serialStatusChanged)
+    def serialStatus(self): return self._serial_status
+
+    @Property(str, notify=availablePortsChanged)
+    def availablePorts(self): return self._available_ports
+
+    # ── QML Slots ────────────────────────────────────────────
 
     @Slot()
     def scanDTC(self):
@@ -1024,7 +1075,6 @@ class DashOSApp(QObject):
 
     @Slot()
     def toggleCharger(self):
-        """Toggle DC charger on/off"""
         self._charger_enabled = not self._charger_enabled
         self._charger_mode = "on" if self._charger_enabled else "off"
         self.chargerEnabledChanged.emit()
@@ -1034,7 +1084,6 @@ class DashOSApp(QObject):
 
     @Slot(str)
     def setChargerMode(self, mode):
-        """Set charger mode: 'off', 'limit', or 'on'"""
         self._charger_mode = mode
         self._charger_enabled = mode != "off"
         self.chargerModeChanged.emit()
@@ -1045,21 +1094,19 @@ class DashOSApp(QObject):
             elif mode == "limit":
                 self._serial_bridge.send_command('enable_charger', val=1)
                 self._serial_bridge.send_command('set_current', val=self._charger_limit)
-            else:  # "on"
+            else:
                 self._serial_bridge.send_command('enable_charger', val=1)
-        # Update fault text for demo
         if self._demo_mode:
             if mode == "off":
                 self._fault_text = "DC CHARGE OFF"
             elif mode == "limit":
-                self._fault_text = f"CHARGE LIMITED\n{self._charger_limit:.0f}A — Current limited"
+                self._fault_text = f"CHARGE LIMITED\n{self._charger_limit:.0f}A \u2014 Current limited"
             else:
-                self._fault_text = "CHARGING FULL RATE\n30A — All systems normal"
+                self._fault_text = "CHARGING FULL RATE\n30A \u2014 All systems normal"
             self.faultTextChanged.emit()
 
     @Slot(float)
     def setChargerLimit(self, amps):
-        """Set the charger current limit for LIMIT mode"""
         self._charger_limit = max(1.0, min(30.0, amps))
         self.chargerLimitChanged.emit()
         if self._charger_mode == "limit" and self._serial_bridge:
@@ -1067,10 +1114,8 @@ class DashOSApp(QObject):
 
     @Slot(float)
     def setTimezone(self, offset):
-        """Set timezone offset in hours (e.g., 4.0 for Abu Dhabi)"""
         self._tz_offset_hours = offset
         self.timezoneOffsetChanged.emit()
-        # Update name based on common offsets
         tz_names = {
             -5.0: "New York", -6.0: "Chicago", -8.0: "Los Angeles",
             0.0: "London", 1.0: "Paris", 2.0: "Cairo", 3.0: "Riyadh",
@@ -1083,7 +1128,6 @@ class DashOSApp(QObject):
 
     @Slot()
     def resetTrip(self):
-        """Reset trip computer"""
         self._trip_distance = 0.0
         self._trip_time_secs = 0
         self._trip_time = "00:00:00"
@@ -1096,241 +1140,46 @@ class DashOSApp(QObject):
 
     @Slot()
     def toggleHUD(self):
-        """Toggle HUD mode"""
         self._hud_mode = not self._hud_mode
         self.hudModeChanged.emit()
 
     @Slot()
     def dismissAlert(self):
-        """Dismiss current alert for 30 seconds"""
         self._alert_visible = False
         self._alert_suppressed_until = time.time() + 30
         self.alertVisibleChanged.emit()
 
     @Slot(str)
     def sendMeshPreset(self, text):
-        """Send a preset Meshtastic message"""
-        if self._meshtastic:
-            self._meshtastic.send_message(text)
+        pass  # Meshtastic not supported in desktop version
 
     @Slot()
     def scanWifi(self):
-        """Scan for available WiFi networks"""
-
-        self._wifi_scanning = True
-        self.wifiScanningChanged.emit()
-
-        def _scan():
-            networks = []
-            if self._demo_mode:
-                # Demo WiFi networks
-                import time as _t
-                _t.sleep(1.5)
-                networks = [
-                    {"ssid": "MyHotspot", "signal": -45, "secured": True, "connected": True},
-                    {"ssid": "Etisalat-5G-Home", "signal": -62, "secured": True, "connected": False},
-                    {"ssid": "du-WiFi-Public", "signal": -71, "secured": False, "connected": False},
-                    {"ssid": "Starbucks_Free", "signal": -78, "secured": False, "connected": False},
-                    {"ssid": "Neighbor-AP", "signal": -85, "secured": True, "connected": False},
-                ]
-            else:
-                try:
-                    import subprocess
-                    result = subprocess.run(
-                        ['nmcli', '-t', '-f', 'SSID,SIGNAL,SECURITY,ACTIVE', 'dev', 'wifi', 'list'],
-                        capture_output=True, text=True, timeout=15
-                    )
-                    for line in result.stdout.strip().split('\n'):
-                        if not line:
-                            continue
-                        parts = line.split(':')
-                        if len(parts) >= 4 and parts[0]:
-                            networks.append({
-                                "ssid": parts[0],
-                                "signal": -100 + int(parts[1]) if parts[1] else -100,
-                                "secured": parts[2] != "" and parts[2] != "--",
-                                "connected": parts[3] == "yes"
-                            })
-                except Exception as e:
-                    print(f"[WiFi] Scan failed: {e}")
-
-            self._wifi_list = json.dumps(networks)
-            self.wifiListChanged.emit()
-            self._wifi_scanning = False
-            self.wifiScanningChanged.emit()
-
-        threading.Thread(target=_scan, daemon=True).start()
+        """Not applicable for desktop — show placeholder"""
+        pass
 
     @Slot(str)
     def connectWifi(self, ssid):
-        """Connect to a WiFi network"""
-
-        def _connect():
-            if self._demo_mode:
-                import time as _t
-                _t.sleep(1)
-                self._wifi_connected_name = ssid
-                self._wifi_connected = True
-                self.wifiConnectedNameChanged.emit()
-                self.wifiConnectedChanged.emit()
-            else:
-                try:
-                    import subprocess
-                    subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid], timeout=30)
-                    self._wifi_connected_name = ssid
-                    self._wifi_connected = True
-                    self.wifiConnectedNameChanged.emit()
-                    self.wifiConnectedChanged.emit()
-                except Exception as e:
-                    print(f"[WiFi] Connect failed: {e}")
-        threading.Thread(target=_connect, daemon=True).start()
+        pass
 
     @Slot()
     def scanBluetooth(self):
-        """Scan for Bluetooth devices"""
-
-        self._bt_scanning = True
-        self.btScanningChanged.emit()
-
-        def _scan():
-            devices = []
-            if self._demo_mode:
-                import time as _t
-                _t.sleep(2)
-                devices = [
-                    {"name": "CarStereo-BT", "addr": "AA:BB:CC:11:22:33", "type": "audio", "connected": True},
-                    {"name": "JBL Flip 6", "addr": "DD:EE:FF:44:55:66", "type": "audio", "connected": False},
-                    {"name": "OBD2-ELM327", "addr": "11:22:33:AA:BB:CC", "type": "obd", "connected": False},
-                    {"name": "iPhone 15 Pro", "addr": "44:55:66:DD:EE:FF", "type": "phone", "connected": False},
-                    {"name": "Galaxy Watch 5", "addr": "77:88:99:00:11:22", "type": "other", "connected": False},
-                ]
-            else:
-                try:
-                    import subprocess
-                    result = subprocess.run(
-                        ['bluetoothctl', 'devices'],
-                        capture_output=True, text=True, timeout=10
-                    )
-                    for line in result.stdout.strip().split('\n'):
-                        parts = line.split(' ', 2)
-                        if len(parts) >= 3:
-                            devices.append({
-                                "name": parts[2],
-                                "addr": parts[1],
-                                "type": "unknown",
-                                "connected": False
-                            })
-                except Exception as e:
-                    print(f"[BT] Scan failed: {e}")
-
-            self._bt_list = json.dumps(devices)
-            self.btListChanged.emit()
-            self._bt_scanning = False
-            self.btScanningChanged.emit()
-
-        threading.Thread(target=_scan, daemon=True).start()
+        pass
 
     @Slot(str)
     def connectBluetooth(self, addr):
-        """Connect to a Bluetooth device"""
-
-        def _connect():
-            if self._demo_mode:
-                import time as _t
-                _t.sleep(1)
-                # Find name from list
-                devs = json.loads(self._bt_list)
-                for d in devs:
-                    if d["addr"] == addr:
-                        self._bt_connected_name = d["name"]
-                        break
-                self._bt_connected = True
-                self.btConnectedNameChanged.emit()
-                self.btConnectedChanged.emit()
-            else:
-                try:
-                    import subprocess
-                    subprocess.run(['bluetoothctl', 'connect', addr], timeout=30)
-                    self._bt_connected = True
-                    self.btConnectedChanged.emit()
-                except Exception as e:
-                    print(f"[BT] Connect failed: {e}")
-        threading.Thread(target=_connect, daemon=True).start()
-
-    # ── Update callbacks ──
-
-    def _on_update_available(self, available):
-        self._update_available = available
-        self.updateAvailableChanged.emit()
-
-    def _on_update_status(self, status):
-        self._update_status = status
-        self.updateStatusChanged.emit()
-
-    def _on_update_in_progress(self, in_progress):
-        self._update_in_progress = in_progress
-        self.updateInProgressChanged.emit()
-
-    def _on_update_log(self, log_line):
-        self._update_log = log_line
-        self.updateLogChanged.emit()
+        pass
 
     @Slot()
     def downloadUaeMap(self):
-        """Download UAE offline map (OSM PBF) to SD card"""
-
-
-        if self._map_downloading:
-            return
-
-        self._map_downloading = True
-        self.mapDownloadingChanged.emit()
-
-        def _download():
-            import urllib.request
-            # UAE extract from Geofabrik (~380MB)
-            url = "https://download.geofabrik.de/asia/gcc-states-latest.osm.pbf"
-            map_dir = self._map_dir or os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), '..', 'maps')
-            os.makedirs(map_dir, exist_ok=True)
-            dest = os.path.join(map_dir, "uae-latest.osm.pbf")
-
-            try:
-                req = urllib.request.Request(url)
-                resp = urllib.request.urlopen(req, timeout=30)
-                total = int(resp.headers.get('Content-Length', 0))
-                downloaded = 0
-                block_size = 65536
-
-                with open(dest, 'wb') as f:
-                    while True:
-                        chunk = resp.read(block_size)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total > 0:
-                            self._map_download_progress = downloaded / total
-                            self.mapDownloadProgressChanged.emit()
-
-                self._uae_map_ready = True
-                self.uaeMapReadyChanged.emit()
-            except Exception as e:
-                print(f"[MAP] Download failed: {e}")
-            finally:
-                self._map_downloading = False
-                self.mapDownloadingChanged.emit()
-
-        threading.Thread(target=_download, daemon=True).start()
+        pass
 
     @Slot()
     def launchNavigation(self):
-        """Launch offline navigation (placeholder for OSM renderer)"""
         pass
 
     @Slot()
     def toggleLogging(self):
-        """Toggle SD card data logging on/off"""
         self._logging_enabled = not self._logging_enabled
         self.loggingEnabledChanged.emit()
         if self._data_logger:
@@ -1338,21 +1187,51 @@ class DashOSApp(QObject):
 
     @Slot()
     def checkForUpdates(self):
-        """Manually trigger update check"""
-        if self._update_service:
-            self._update_service.checkForUpdates()
+        pass
 
     @Slot()
     def applyUpdate(self):
-        """Apply available update"""
-        if self._update_service:
-            self._update_service.applyUpdate()
+        pass
+
+    # ── Desktop-specific Slots ──
+
+    @Slot(str)
+    def changeSerialPort(self, port):
+        """Change serial port and reconnect"""
+        if self._serial_bridge:
+            self._serial_bridge.stop()
+
+        self._serial_port = port
+        self.serialPortChanged.emit()
+        self._serial_status = f"Connecting to {port}..."
+        self.serialStatusChanged.emit()
+
+        self._serial_bridge = SerialBridge(port=port, baud=self._serial_baud)
+        self._serial_bridge.data_received.connect(self._on_vehicle_data)
+        self._serial_bridge.connected.connect(self._on_serial_connected)
+        self._serial_bridge.error.connect(self._on_serial_error)
+        self._serial_bridge.start()
+
+    @Slot(int)
+    def changeSerialBaud(self, baud):
+        """Change baud rate and reconnect"""
+        self._serial_baud = baud
+        self.serialBaudChanged.emit()
+        if self._serial_port:
+            self.changeSerialPort(self._serial_port)
+
+    @Slot()
+    def refreshPorts(self):
+        """Manually refresh available serial ports"""
+        self._scan_ports()
 
 
 def main():
-    parser = argparse.ArgumentParser(description='DashOS Vehicle Operating System')
+    parser = argparse.ArgumentParser(description='DashOS Desktop — Vehicle Dashboard for Windows')
     parser.add_argument('--demo', action='store_true', help='Run in demo mode with simulated data')
-    parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen kiosk mode')
+    parser.add_argument('--fullscreen', action='store_true', help='Run in fullscreen mode')
+    parser.add_argument('--port', type=str, default=None, help='Serial port (e.g. COM3, /dev/ttyUSB0)')
+    parser.add_argument('--baud', type=int, default=115200, help='Serial baud rate (default: 115200)')
     parser.add_argument('--screenshot', type=str, metavar='FILE',
                         help='Capture screenshot to FILE after rendering, then exit')
     parser.add_argument('--screenshot-all', type=str, metavar='DIR',
@@ -1363,11 +1242,15 @@ def main():
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     app = QGuiApplication(sys.argv)
-    app.setApplicationName("DashOS")
+    app.setApplicationName("DashOS Desktop")
     app.setOrganizationName("DashOS")
 
     # Create main controller
-    dash = DashOSApp(demo_mode=args.demo)
+    dash = DashOSDesktop(
+        demo_mode=args.demo,
+        serial_port=args.port,
+        serial_baud=args.baud
+    )
 
     # Load QML UI
     engine = QQmlApplicationEngine()
@@ -1382,42 +1265,32 @@ def main():
 
     root = engine.rootObjects()[0]
 
-    # Force window size to match device resolution
+    # Set window properties
     from PySide6.QtCore import QSize
     root.setWidth(DASHOS_WIDTH)
     root.setHeight(DASHOS_HEIGHT)
-    root.setMinimumSize(QSize(DASHOS_WIDTH, DASHOS_HEIGHT))
+    root.setMinimumSize(QSize(800, 480))
 
-    # Fullscreen mode for kiosk
     if args.fullscreen:
         root.showFullScreen()
 
     def grab_window_image():
-        """Grab window screenshot at device resolution (1024x600)"""
+        """Grab window screenshot"""
         from PySide6.QtCore import Qt
-        # Try to grab from the QQuickWindow's render (best fidelity)
         try:
             img = root.grabWindow()
             if img and not img.isNull():
-                if img.width() != DASHOS_WIDTH or img.height() != DASHOS_HEIGHT:
-                    img = img.scaled(DASHOS_WIDTH, DASHOS_HEIGHT,
-                                     Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
                 return img
         except Exception:
             pass
-        # Fallback: grab from primary screen
         screen = app.primaryScreen()
         if screen:
             pixmap = screen.grabWindow(0)
             img = pixmap.toImage()
             if img and not img.isNull():
-                if img.width() != DASHOS_WIDTH or img.height() != DASHOS_HEIGHT:
-                    img = img.scaled(DASHOS_WIDTH, DASHOS_HEIGHT,
-                                     Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
                 return img
         return None
 
-    # Screenshot mode: capture after UI renders, then exit
     if args.screenshot:
         def request_grab():
             img = grab_window_image()
@@ -1428,11 +1301,8 @@ def main():
             else:
                 print("[ERROR] No screen available for screenshot")
             app.quit()
-
-        # Allow 3 seconds for QML to fully render and demo data to populate
         QTimer.singleShot(3000, request_grab)
 
-    # Screenshot-all mode: cycle through all pages and capture each
     if args.screenshot_all:
         out_dir = os.path.abspath(args.screenshot_all)
         os.makedirs(out_dir, exist_ok=True)
@@ -1441,11 +1311,10 @@ def main():
         stack_view = root.findChild(QObject, "stackView")
 
         def capture_all_pages():
-            page_idx = [0]  # mutable counter for closure
+            page_idx = [0]
 
             def capture_next():
                 if page_idx[0] > 0:
-                    # Save screenshot of the previous page (rendered by now)
                     prev = page_idx[0] - 1
                     img = grab_window_image()
                     if img:
@@ -1456,10 +1325,8 @@ def main():
                         print(f"  [{prev+1}/6] {out_path} ({w}x{h})")
 
                 if page_idx[0] < len(page_names):
-                    # Switch to the next page
                     stack_view.setProperty("currentIndex", page_idx[0])
                     page_idx[0] += 1
-                    # Wait 2s for page to fully render before capturing
                     QTimer.singleShot(2000, capture_next)
                 else:
                     print(f"All {len(page_names)} screenshots saved to {out_dir}/")
@@ -1467,7 +1334,6 @@ def main():
 
             capture_next()
 
-        # Allow 3 seconds for initial QML render + demo data
         QTimer.singleShot(3000, capture_all_pages)
 
     sys.exit(app.exec())
